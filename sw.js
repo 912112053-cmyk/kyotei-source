@@ -4,11 +4,12 @@
      実行時にキャッシュし、次回からはキャッシュ優先（オフライン対応） */
 "use strict";
 
-var CACHE_NAME = "kyotei-web-v1";
+var CACHE_NAME = "kyotei-web-v2";
 
 var PRECACHE_URLS = [
   "./",
   "./index.html",
+  "./convert.js",
   "./manifest.webmanifest",
   "./AppIcon1024.png",
   "./icon-512.png",
