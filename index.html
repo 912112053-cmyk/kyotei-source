@@ -558,16 +558,20 @@ function toast(msg){
 drawTimer(); updateProg(); loadState(); drawTimer(); updateProg(); startTimer();
 </script>
 
+<script src="convert.js"></script>
 <script>
 "use strict";
 /* ================================================================
    共テ (Kyotei web) — 模試PDF → 解ける版HTML 変換アプリ
-   Swift版 (KyoteiTap / Detection.swift) の処理をブラウザへ移植。
+   変換ロジックは convert.js (KyoteiConvert) に集約。このスクリプトは
+   UI とブラウザ固有のオーケストレーション（pdf.js 描画 / worker 管理）
+   だけを持つ。
    ================================================================ */
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
   "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 
+var KC = window.KyoteiConvert;
 var RENDER_SCALE = 200 / 72; /* ≒200dpi */
 
 /* ---------------- small helpers ---------------- */
@@ -633,87 +637,7 @@ async function idbDelete(id){
 }
 
 /* ================================================================
-   解答表パース（Detection.swift の tokenize / scanAnswerTokens 移植）
-   ================================================================ */
-function normalizeDigits(s){
-  return s.replace(/[０-９]/g, function(c){
-    return String.fromCharCode(c.charCodeAt(0) - 0xFF10 + 0x30);
-  });
-}
-function tokenize(s){
-  return normalizeDigits(s).split(/[^0-9]+/).filter(function(x){ return x.length; })
-    .map(function(x){ return parseInt(x, 10); }).filter(function(x){ return !isNaN(x); });
-}
-function scanAnswerTokens(tokens){
-  var key = {}, points = {};
-  var expected = 1, i = 0;
-  while(i < tokens.length){
-    if(tokens[i] === expected){
-      var j = i + 1;
-      if(j < tokens.length && tokens[j] === expected) j += 1; /* 設問番号=解答番号の重複をスキップ */
-      if(j < tokens.length && tokens[j] >= 1 && tokens[j] <= 9){
-        key[expected] = tokens[j];
-        if(j + 1 < tokens.length && tokens[j + 1] >= 1 && tokens[j + 1] <= 20){
-          points[expected] = tokens[j + 1];
-          i = j + 2;
-        } else {
-          i = j + 1;
-        }
-        expected += 1;
-        continue;
-      }
-    }
-    i += 1;
-  }
-  if(Object.keys(key).length >= 3) return { key: key, points: points };
-
-  /* フォールバック: (設問番号, 解答番号, 正解, 配点) の4連続トークン */
-  var pKey = {}, pPoints = {};
-  for(var k = 0; k + 3 < tokens.length; k++){
-    var sq = tokens[k], an = tokens[k+1], cor = tokens[k+2], pts = tokens[k+3];
-    if(sq >= 1 && sq <= 20 && an >= 1 && an <= 300 && cor >= 1 && cor <= 9 &&
-       pts >= 1 && pts <= 10 && pKey[an] == null){
-      pKey[an] = cor; pPoints[an] = pts;
-    }
-  }
-  return Object.keys(pKey).length > Object.keys(key).length
-    ? { key: pKey, points: pPoints } : { key: key, points: points };
-}
-
-/* 解答PDF → テキスト（pdf.js のテキスト層）。総文字数を返す */
-async function answerPDFText(buf){
-  var doc = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-  var parts = [];
-  try{
-    for(var p = 1; p <= doc.numPages; p++){
-      var page = await doc.getPage(p);
-      var tc = await page.getTextContent();
-      parts.push(tc.items.map(function(it){ return it.str; }).join(" "));
-    }
-  } finally { doc.destroy(); }
-  return parts.join(" ");
-}
-
-/* 解答PDF → OCRテキスト（テキスト層が乏しい場合） */
-async function answerPDFOCRText(buf, worker, onPage){
-  var doc = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-  var parts = [];
-  try{
-    for(var p = 1; p <= doc.numPages; p++){
-      if(onPage) onPage(p, doc.numPages);
-      var page = await doc.getPage(p);
-      var canvas = await renderPageToCanvas(page);
-      var flat = await ocrCanvas(worker, canvas);
-      parts.push(flat.lines.map(function(l){ return l.text; }).join(" "));
-      canvas.width = 0; canvas.height = 0;
-      await yieldUI();
-    }
-  } finally { doc.destroy(); }
-  return parts.join(" ");
-}
-
-/* ================================================================
-   ページ描画 / OCR / テキスト層
+   ページ描画 / OCR worker
    ================================================================ */
 async function renderPageToCanvas(page){
   var viewport = page.getViewport({ scale: RENDER_SCALE });
@@ -727,605 +651,6 @@ async function renderPageToCanvas(page){
   return canvas;
 }
 
-/* tesseract.js v5 の blocks 出力を lines / words に平坦化 */
-function flattenTesseract(data){
-  var lines = [], words = [];
-  function pushLine(l){
-    if(!l || !l.bbox) return;
-    lines.push({ text: (l.text || ""), bbox: l.bbox });
-    (l.words || []).forEach(function(w){ if(w && w.bbox) words.push(w.bbox); });
-  }
-  if(data.blocks && data.blocks.length){
-    data.blocks.forEach(function(b){
-      (b.paragraphs || []).forEach(function(p){
-        (p.lines || []).forEach(pushLine);
-      });
-    });
-  }
-  if(!lines.length && data.lines){
-    data.lines.forEach(pushLine);
-  }
-  if(!words.length && data.words){
-    data.words.forEach(function(w){ if(w && w.bbox) words.push(w.bbox); });
-  }
-  return { lines: lines, words: words };
-}
-
-async function ocrCanvas(worker, canvas){
-  var result = await worker.recognize(canvas, {}, { blocks: true });
-  var flat = flattenTesseract(result.data);
-  var W = canvas.width, H = canvas.height;
-  var lines = [];
-  flat.lines.forEach(function(l){
-    var text = (l.text || "").replace(/\s+$/g, "").replace(/^\s+/g, "");
-    if(!text) return;
-    lines.push({
-      text: text,
-      x: l.bbox.x0 / W, y: l.bbox.y0 / H,
-      width: (l.bbox.x1 - l.bbox.x0) / W,
-      height: (l.bbox.y1 - l.bbox.y0) / H
-    });
-  });
-  var words = flat.words.map(function(b){
-    return { x0: b.x0 / W, y0: b.y0 / H, x1: b.x1 / W, y1: b.y1 / H };
-  });
-  return { lines: lines, words: words };
-}
-
-/* テキスト層: ページ全体の文字数と日本語比率を数える */
-function countJapanese(text){
-  var m = text.match(/[぀-ゟ゠-ヿ一-鿿]/g);
-  return m ? m.length : 0;
-}
-
-/* テキスト層の items を行にまとめる（y 近接でグルーピング） */
-function linesFromTextContent(tc, pageW, pageH){
-  var items = [];
-  tc.items.forEach(function(it){
-    if(!it.str || !it.str.length) return;
-    var tr = it.transform;
-    var h = it.height > 0 ? it.height : (Math.abs(tr[3]) || Math.abs(tr[0]) || 10);
-    items.push({ str: it.str, x: tr[4], base: tr[5], w: it.width || 0, h: h });
-  });
-  if(!items.length) return { lines: [], words: [] };
-  var heights = items.map(function(i){ return i.h; }).sort(function(a,b){ return a-b; });
-  var medH = heights[Math.floor(heights.length / 2)] || 10;
-  items.sort(function(a, b){ return b.base - a.base || a.x - b.x; }); /* 上の行から */
-  var groups = [];
-  items.forEach(function(it){
-    var g = groups[groups.length - 1];
-    if(g && Math.abs(it.base - g.base) <= 0.5 * medH){
-      g.items.push(it);
-    } else {
-      groups.push({ base: it.base, items: [it] });
-    }
-  });
-  var lines = [], words = [];
-  groups.forEach(function(g){
-    g.items.sort(function(a, b){ return a.x - b.x; });
-    var minX = Math.min.apply(null, g.items.map(function(i){ return i.x; }));
-    var maxX = Math.max.apply(null, g.items.map(function(i){ return i.x + i.w; }));
-    var maxH = Math.max.apply(null, g.items.map(function(i){ return i.h; }));
-    var text = g.items.map(function(i){ return i.str; }).join("");
-    var top = (pageH - (g.base + maxH)) / pageH;
-    lines.push({
-      text: text,
-      x: minX / pageW, y: top,
-      width: (maxX - minX) / pageW, height: maxH / pageH
-    });
-    g.items.forEach(function(i){
-      words.push({
-        x0: i.x / pageW, y0: (pageH - (i.base + i.h)) / pageH,
-        x1: (i.x + i.w) / pageW, y1: (pageH - i.base) / pageH
-      });
-    });
-  });
-  return { lines: lines, words: words };
-}
-
-/* ================================================================
-   図バンド検出（検証済みパラメータをピクセル単位で実装）
-   dark = gray < 210 / マスク = 単語ボックス +8px・+10px (200dpi換算)
-   行アクティブ ≥0.4% / ギャップ結合 ≤1.8%H / GROW ≥0.1%（最大3%H）
-   保持: 高さ ≥2%H / テキスト列での平均密度 ≥0.015 / 列トリム <1%
-         幅 ≥10%W / 侵食後の内部密度 ≥0.01 / (高さ<3%H かつ 内部<0.10) は除外
-   ================================================================ */
-function detectFigureBands(canvas, wordBoxes){
-  var W = canvas.width, H = canvas.height;
-  if(W < 40 || H < 40) return [];
-  var ctx = canvas.getContext("2d", { willReadFrequently: true });
-  var img;
-  try{ img = ctx.getImageData(0, 0, W, H); }catch(e){ return []; }
-  var d = img.data;
-  var gray = new Uint8Array(W * H);
-  for(var i = 0, j = 0; i < gray.length; i++, j += 4){
-    gray[i] = (d[j] * 299 + d[j+1] * 587 + d[j+2] * 114) / 1000;
-  }
-  /* テキストマスク */
-  var mask = new Uint8Array(W * H);
-  var padX = 8 * (W / 1432), padY = 10 * (H / 2026);
-  wordBoxes.forEach(function(b){
-    var x0 = Math.max(0, Math.floor(b.x0 * W - padX));
-    var x1 = Math.min(W, Math.ceil(b.x1 * W + padX));
-    var y0 = Math.max(0, Math.floor(b.y0 * H - padY));
-    var y1 = Math.min(H, Math.ceil(b.y1 * H + padY));
-    for(var y = y0; y < y1; y++){
-      var off = y * W;
-      for(var x = x0; x < x1; x++) mask[off + x] = 1;
-    }
-  });
-  function isNTD(x, y){ var idx = y * W + x; return gray[idx] < 210 && !mask[idx]; }
-
-  /* 行ごとの非テキスト暗ピクセル数 */
-  var rowDark = new Float64Array(H);
-  for(var y = 0; y < H; y++){
-    var off = y * W, c = 0;
-    for(var x = 0; x < W; x++){ var idx = off + x; if(gray[idx] < 210 && !mask[idx]) c++; }
-    rowDark[y] = c;
-  }
-  var active = new Uint8Array(H);
-  var actThresh = 0.004 * W;
-  for(var y2 = 0; y2 < H; y2++) active[y2] = rowDark[y2] >= actThresh ? 1 : 0;
-  /* ギャップ結合 */
-  var maxGap = Math.round(0.018 * H);
-  var scan = 0;
-  while(scan < H){
-    if(active[scan]){ scan++; continue; }
-    var gapEnd = scan;
-    while(gapEnd < H && !active[gapEnd]) gapEnd++;
-    if(scan > 0 && gapEnd < H && gapEnd - scan <= maxGap){
-      for(var r = scan; r < gapEnd; r++) active[r] = 1;
-    }
-    scan = gapEnd;
-  }
-  /* ラン収集 */
-  var runs = [], runStart = -1;
-  for(var y3 = 0; y3 < H; y3++){
-    if(active[y3]){ if(runStart < 0) runStart = y3; }
-    else if(runStart >= 0){ runs.push({ start: runStart, end: y3 }); runStart = -1; }
-  }
-  if(runStart >= 0) runs.push({ start: runStart, end: H });
-  /* GROW: 隣接行が ≥0.1% なら上下へ伸ばす（最大 3%H） */
-  var growThresh = 0.001 * W, maxGrow = Math.round(0.03 * H);
-  runs.forEach(function(run){
-    var n = 0;
-    while(run.start > 0 && n < maxGrow && rowDark[run.start - 1] >= growThresh){ run.start--; n++; }
-    n = 0;
-    while(run.end < H && n < maxGrow && rowDark[run.end] >= growThresh){ run.end++; n++; }
-  });
-  /* 重なったランを統合 */
-  runs.sort(function(a, b){ return a.start - b.start; });
-  var merged = [];
-  runs.forEach(function(run){
-    var last = merged[merged.length - 1];
-    if(last && run.start <= last.end){ last.end = Math.max(last.end, run.end); }
-    else merged.push({ start: run.start, end: run.end });
-  });
-  /* テキスト列の範囲 */
-  var colX0 = 0, colX1 = W;
-  if(wordBoxes.length){
-    var mn = Math.min.apply(null, wordBoxes.map(function(b){ return b.x0; }));
-    var mx = Math.max.apply(null, wordBoxes.map(function(b){ return b.x1; }));
-    colX0 = Math.max(0, Math.floor((mn - 0.02) * W));
-    colX1 = Math.min(W, Math.ceil((mx + 0.02) * W));
-  }
-  var minBandH = 0.02 * H;
-  var bands = [];
-  merged.forEach(function(run){
-    var rowCount = run.end - run.start;
-    if(rowCount < minBandH || colX1 <= colX0) return;
-    /* テキスト列での平均密度 */
-    var dark = 0, total = 0;
-    for(var ry = run.start; ry < run.end; ry++){
-      for(var cx = colX0; cx < colX1; cx++){ total++; if(isNTD(cx, ry)) dark++; }
-    }
-    if(!total || dark / total < 0.015) return;
-    /* 列トリム（密度 <1% の列を両端から） */
-    function colDensity(cx){
-      var dc = 0;
-      for(var ry2 = run.start; ry2 < run.end; ry2++) if(isNTD(cx, ry2)) dc++;
-      return dc / rowCount;
-    }
-    var c0 = colX0, c1 = colX1;
-    while(c0 < c1 && colDensity(c0) < 0.01) c0++;
-    while(c1 > c0 && colDensity(c1 - 1) < 0.01) c1--;
-    if(c1 <= c0) return;
-    if((c1 - c0) / W < 0.10) return;
-    /* 侵食後の内部密度 */
-    var er = Math.round(0.004 * W);
-    var ix0 = c0 + er, ix1 = c1 - er, iy0 = run.start + er, iy1 = run.end - er;
-    if(ix1 <= ix0 || iy1 <= iy0) return;
-    var inDark = 0, inTotal = 0;
-    for(var iy = iy0; iy < iy1; iy++){
-      for(var ix = ix0; ix < ix1; ix++){ inTotal++; if(isNTD(ix, iy)) inDark++; }
-    }
-    if(!inTotal) return;
-    var interior = inDark / inTotal;
-    if(interior < 0.01) return;
-    if(rowCount < 0.03 * H && interior < 0.10) return;
-    bands.push({ xMin: c0 / W, yMin: run.start / H, xMax: c1 / W, yMax: run.end / H });
-  });
-  return bands;
-}
-
-/* バンドを切り取って JPEG data URL 化（パディング = ページ高の1.5%） */
-function cropBandToDataURL(canvas, band){
-  var W = canvas.width, H = canvas.height;
-  var padPx = 0.015 * H;
-  var x = Math.max(0, band.xMin * W - padPx);
-  var y = Math.max(0, band.yMin * H - padPx);
-  var x2 = Math.min(W, band.xMax * W + padPx);
-  var y2 = Math.min(H, band.yMax * H + padPx);
-  var w = Math.floor(x2 - x), h = Math.floor(y2 - y);
-  if(w < 8 || h < 8) return null;
-  var c = document.createElement("canvas");
-  c.width = w; c.height = h;
-  var cx = c.getContext("2d");
-  cx.fillStyle = "#ffffff"; cx.fillRect(0, 0, w, h);
-  cx.drawImage(canvas, Math.floor(x), Math.floor(y), w, h, 0, 0, w, h);
-  return c.toDataURL("image/jpeg", 0.8);
-}
-
-
-/* ================================================================
-   読順（Detection.swift の readingOrder 移植）
-   ================================================================ */
-function readingOrder(lines){
-  if(lines.length <= 1) return lines;
-  var heights = lines.map(function(l){ return l.height; }).sort(function(a,b){ return a-b; });
-  var medianHeight = heights[Math.floor(heights.length / 2)];
-  function rowSorted(group){
-    var byY = group.slice().sort(function(a, b){
-      var ca = a.y + a.height / 2, cb = b.y + b.height / 2;
-      if(ca !== cb) return ca - cb;
-      return a.x - b.x;
-    });
-    var rows = [];
-    byY.forEach(function(line){
-      var center = line.y + line.height / 2;
-      var lastRow = rows[rows.length - 1];
-      if(lastRow && Math.abs(center - (lastRow[0].y + lastRow[0].height / 2)) <= 0.5 * medianHeight){
-        lastRow.push(line);
-      } else rows.push([line]);
-    });
-    var out = [];
-    rows.forEach(function(r){
-      r.sort(function(a, b){ return a.x - b.x; });
-      r.forEach(function(l){ out.push(l); });
-    });
-    return out;
-  }
-  var centers = lines.map(function(l){ return l.x + l.width / 2; }).sort(function(a,b){ return a-b; });
-  var splitX = null;
-  if(centers.length >= 10){
-    var widestGap = 0, widestMid = 0, widestIndex = 0;
-    for(var i = 0; i < centers.length - 1; i++){
-      var gap = centers[i+1] - centers[i];
-      if(gap > widestGap){ widestGap = gap; widestMid = (centers[i] + centers[i+1]) / 2; widestIndex = i; }
-    }
-    var leftCount = widestIndex + 1, rightCount = centers.length - leftCount;
-    if(widestGap > 0.15 && leftCount >= 5 && rightCount >= 5) splitX = widestMid;
-  }
-  if(splitX !== null){
-    var left = lines.filter(function(l){ return l.x + l.width / 2 < splitX; });
-    var right = lines.filter(function(l){ return l.x + l.width / 2 >= splitX; });
-    return rowSorted(left).concat(rowSorted(right));
-  }
-  return rowSorted(lines);
-}
-
-/* 唯一、捨ててよい行: ページ上下端の単独ページ番号 */
-function isNoiseLine(line){
-  var text = line.text.replace(/^\s+|\s+$/g, "");
-  if(!text || text.length > 8) return false;
-  if(!/[0-9]/.test(text)) return false;
-  if(!/^[0-9\-−–—― 　・\/]+$/.test(text)) return false;
-  var centerY = line.y + line.height / 2;
-  return centerY < 0.045 || centerY > 0.955;
-}
-
-var CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
-var CIRCLED_MARKS = ["","①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
-var KATAKANA_LABELS = "アイウエオカキクケコサシスセソタチツテト";
-
-/* 選択肢の開始行を検出（丸数字 / (1) / 1. 形式）。{value, text} か null */
-function choiceStart(rawLine){
-  var line = rawLine.replace(/^\s+|\s+$/g, "");
-  if(!line) return null;
-  var first = line.charAt(0);
-  var ci = CIRCLED.indexOf(first);
-  if(ci >= 0){
-    var rest = line.slice(1).replace(/^\s+|\s+$/g, "");
-    while(rest.length && "．.、：:".indexOf(rest.charAt(0)) >= 0){
-      rest = rest.slice(1).replace(/^\s+|\s+$/g, "");
-    }
-    if(!rest || (rest.indexOf("のうちから") >= 0 && line.length <= 40)) return null;
-    return { value: ci + 1, text: rest };
-  }
-  var m = line.match(/^[\(（]\s*([0-9０-９]{1,2})\s*[\)）]\s*(.*)$/);
-  if(m){
-    var v = parseInt(normalizeDigits(m[1]), 10);
-    var rest2 = (m[2] || "").replace(/^\s+|\s+$/g, "");
-    if(!(v >= 1 && v <= 20)) return null;
-    if(!rest2 || (rest2.indexOf("のうちから") >= 0 && line.length <= 40)) return null;
-    return { value: v, text: rest2 };
-  }
-  var m2 = line.match(/^([0-9０-９]{1,2})[.．、]\s*(.+)$/);
-  if(m2){
-    var v2 = parseInt(normalizeDigits(m2[1]), 10);
-    var rest3 = (m2[2] || "").replace(/^\s+|\s+$/g, "");
-    if(!(v2 >= 1 && v2 <= 20)) return null;
-    if(!rest3 || (rest3.indexOf("のうちから") >= 0 && line.length <= 40)) return null;
-    return { value: v2, text: rest3 };
-  }
-  return null;
-}
-
-function isQuestionHeader(text){
-  var t = text.replace(/^\s+|\s+$/g, "");
-  if(t.charAt(0) !== "第") return false;
-  return t.slice(0, 8).indexOf("問") >= 0;
-}
-function endsSentence(text){
-  if(!text) return true;
-  return "。．！？」』）】".indexOf(text.charAt(text.length - 1)) >= 0;
-}
-function beginsParagraph(text){
-  if(!text) return false;
-  var first = text.charAt(0);
-  if("第問・●○".indexOf(first) >= 0) return true;
-  if(KATAKANA_LABELS.indexOf(first) >= 0 && text.length >= 2){
-    var second = text.charAt(1);
-    if("、：:・".indexOf(second) >= 0 || second === " " || second === "　") return true;
-  }
-  if(text.length === 1 && KATAKANA_LABELS.indexOf(first) >= 0) return true;
-  return false;
-}
-
-/* ================================================================
-   FlowBuilder（Detection.swift 移植）
-   NO-DROP: 分類は「どう描くか」だけを決め、「描くかどうか」は決めない。
-   すべての行は必ずどれか1つの要素として描かれる。
-   ================================================================ */
-function FlowBuilder(){
-  this.elements = [];
-  this.pendingParas = [];
-  this.paraBuffer = "";
-  this.paraPage = 0;
-  this.openChoices = null;
-  this.groupStem = [];
-  this.groupPage = 0;
-  this.choiceBaseX = 0;
-}
-FlowBuilder.prototype.flushParagraph = function(){
-  if(!this.paraBuffer) return;
-  this.pendingParas.push({ page: this.paraPage, text: this.paraBuffer });
-  this.paraBuffer = "";
-};
-FlowBuilder.prototype.closeGroup = function(){
-  if(this.openChoices === null) return;
-  var choices = this.openChoices;
-  this.openChoices = null;
-  if(choices.length){
-    this.elements.push({
-      type: "question", page: this.groupPage,
-      stem: this.groupStem.map(function(p){ return p.text; }),
-      choices: choices
-    });
-  }
-  this.groupStem = [];
-};
-FlowBuilder.prototype.addParagraphLine = function(line){
-  if(!this.paraBuffer){
-    this.paraBuffer = line.text; this.paraPage = line.page; return;
-  }
-  if(beginsParagraph(line.text) || endsSentence(this.paraBuffer)){
-    this.flushParagraph();
-    this.paraBuffer = line.text; this.paraPage = line.page;
-  } else {
-    this.paraBuffer += line.text;
-  }
-};
-FlowBuilder.prototype.addChoice = function(text, line){
-  if(this.openChoices === null || this.openChoices.length >= 10){
-    this.closeGroup();
-    this.flushParagraph();
-    this.groupStem = this.pendingParas;
-    this.pendingParas = [];
-    this.groupPage = line.page;
-    this.choiceBaseX = line.x;
-    this.openChoices = [];
-  }
-  this.openChoices.push(text);
-};
-FlowBuilder.prototype.addLine = function(line){
-  if(isQuestionHeader(line.text)){
-    this.closeGroup();
-    this.flushParagraph();
-    this.paraBuffer = line.text;
-    this.paraPage = line.page;
-    this.flushParagraph();
-    return;
-  }
-  var choice = choiceStart(line.text);
-  if(choice){
-    this.addChoice(choice.text, line);
-    return;
-  }
-  if(this.openChoices !== null){
-    if(line.x > this.choiceBaseX + 0.015 && this.openChoices.length){
-      this.openChoices[this.openChoices.length - 1] += line.text;
-      return;
-    }
-    this.closeGroup();
-  }
-  this.addParagraphLine(line);
-};
-FlowBuilder.prototype.addFigure = function(src, page){
-  this.closeGroup();
-  this.flushParagraph();
-  var self = this;
-  this.pendingParas.forEach(function(p){
-    self.elements.push({ type: "paragraph", page: p.page, text: p.text });
-  });
-  this.pendingParas = [];
-  this.elements.push({ type: "figure", page: page, src: src });
-};
-FlowBuilder.prototype.finish = function(){
-  this.closeGroup();
-  this.flushParagraph();
-  var self = this;
-  this.pendingParas.forEach(function(p){
-    self.elements.push({ type: "paragraph", page: p.page, text: p.text });
-  });
-  this.pendingParas = [];
-};
-
-/* ================================================================
-   解ける版HTMLの生成（Detection.swift の buildHTML 移植）
-   ================================================================ */
-function fullwidthNumber(n){
-  return String(n).replace(/[0-9]/g, function(c){
-    return String.fromCharCode(0xFF10 + (c.charCodeAt(0) - 0x30));
-  });
-}
-function stemWithAnsBox(text, n){
-  var variants = [String(n), fullwidthNumber(n)];
-  var best = null;
-  variants.forEach(function(variant){
-    var from = 0;
-    while(true){
-      var idx = text.indexOf(variant, from);
-      if(idx < 0) break;
-      var beforeOK = idx === 0 || !/[0-9]/.test(text.charAt(idx - 1));
-      var afterIdx = idx + variant.length;
-      var afterOK = afterIdx >= text.length || !/[0-9]/.test(text.charAt(afterIdx));
-      if(beforeOK && afterOK) best = { start: idx, end: afterIdx };
-      from = idx + 1;
-    }
-  });
-  if(!best) return esc(text) + ' <span class="ansbox" data-box="' + n + '">' + n + "</span>";
-  return esc(text.slice(0, best.start))
-    + '<span class="ansbox" data-box="' + n + '">' + esc(text.slice(best.start, best.end)) + "</span>"
-    + esc(text.slice(best.end));
-}
-
-function buildHTML(title, elements, answerKey, points, storageKey){
-  var totalQuestions = 0;
-  elements.forEach(function(e){ if(e.type === "question") totalQuestions++; });
-  var totalPoints = 0;
-  if(totalQuestions > 0){
-    for(var n0 = 1; n0 <= totalQuestions; n0++) totalPoints += (points[n0] != null ? points[n0] : 1);
-  }
-  var body = "", questionNo = 0, currentSheetPage = null;
-  function openSheet(page){
-    if(currentSheetPage !== null) body += "</section>\n";
-    currentSheetPage = page;
-    body += '<section class="sheet" data-page="' + (page + 1) + '">\n';
-    if(page > 0) body += '<div class="runhead">' + esc(title) + "</div>\n";
-    if(page === 0){
-      body += '<div class="bigtitle">\n<h1>' + esc(title) + "</h1>\n";
-      if(totalQuestions > 0){
-        body += '<div class="rng">（解答番号 <span class="ansbox">1</span> ～ <span class="ansbox">' + totalQuestions + "</span>）</div>\n";
-      }
-      body += "</div>\n";
-    }
-  }
-  function ensureSheet(page){ if(currentSheetPage !== page) openSheet(page); }
-
-  elements.forEach(function(element){
-    if(element.type === "paragraph"){
-      ensureSheet(element.page);
-      body += "<p>" + esc(element.text) + "</p>\n";
-    } else if(element.type === "figure"){
-      ensureSheet(element.page);
-      body += '<div class="fig"><img src="' + element.src + '" alt=""></div>\n';
-    } else if(element.type === "question"){
-      ensureSheet(element.page);
-      questionNo += 1;
-      var n = questionNo;
-      body += '<div class="q" id="q' + n + '">\n';
-      body += '<button class="flagbtn" data-flag="' + n + '">見直し</button>\n';
-      if(!element.stem.length){
-        body += '<p class="qstem"><span class="ansbox" data-box="' + n + '">' + n + "</span></p>\n";
-      } else {
-        element.stem.forEach(function(para, index){
-          var cls = index === 0 ? ' class="qstem"' : "";
-          if(index === element.stem.length - 1){
-            body += "<p" + cls + ">" + stemWithAnsBox(para, n) + "</p>\n";
-          } else {
-            body += "<p" + cls + ">" + esc(para) + "</p>\n";
-          }
-        });
-      }
-      body += '<ul class="choices" data-q="' + n + '">\n';
-      element.choices.forEach(function(choice, index){
-        var v = index + 1;
-        var mark = v < CIRCLED_MARKS.length ? CIRCLED_MARKS[v] : String(v);
-        body += '<li><button data-v="' + v + '"><span class="mk">' + mark + "</span><span>" + esc(choice) + "</span></button></li>\n";
-      });
-      body += "</ul>\n";
-      body += '<div class="expl" data-expl="' + n + '"></div>\n';
-      body += "</div>\n";
-    }
-  });
-  if(currentSheetPage !== null) body += "</section>\n";
-  if(currentSheetPage === null){
-    body = '<section class="sheet" data-page="1">\n<div class="bigtitle">\n<h1>' + esc(title)
-      + "</h1>\n</div>\n<p>このPDFからはテキストを読み取れませんでした。</p>\n</section>\n";
-  }
-  var nav = "";
-  if(totalQuestions > 0){
-    nav = '<nav class="navrow">\n';
-    for(var nn = 1; nn <= totalQuestions; nn++){
-      nav += '<button data-jump="q' + nn + '">問' + nn + "</button>\n";
-    }
-    nav += "</nav>\n";
-  }
-  var ansJS = Object.keys(answerKey).sort(function(a,b){ return a-b; })
-    .map(function(k){ return k + ":" + answerKey[k]; }).join(",");
-  var ptsEntries = [];
-  for(var pn = 1; pn <= totalQuestions; pn++) ptsEntries.push(pn + ":" + (points[pn] != null ? points[pn] : 1));
-  var subText = totalQuestions > 0
-    ? "全" + totalQuestions + "問・" + totalPoints + "点満点"
-    : "問題を検出できませんでした";
-  var css = $("gen-css").textContent.replace(/^\n+/, "");
-  var script = $("gen-js").textContent.replace(/^\n+/, "");
-  script = script.split("__TITLE__").join(JSON.stringify(title));
-  script = script.split("__TOTAL__").join(String(totalQuestions));
-  script = script.split("__ANS__").join(ansJS);
-  script = script.split("__PTS__").join(ptsEntries.join(","));
-  script = script.split("__STORAGE_KEY__").join(JSON.stringify(storageKey));
-
-  return "<!doctype html>\n"
-    + '<html lang="ja">\n<head>\n<meta charset="utf-8" />\n'
-    + '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />\n'
-    + '<meta name="color-scheme" content="light dark" />\n'
-    + "<title>" + esc(title) + "（解ける版）</title>\n"
-    + "<style>\n" + css + "\n</" + "style>\n</head>\n<body>\n"
-    + '<header class="bar">\n  <div class="bar-in">\n    <div>\n'
-    + '      <div class="ttl">' + esc(title) + "</div>\n"
-    + '      <div class="sub">' + subText + "</div>\n    </div>\n"
-    + '    <div class="timer" id="timer" title="経過時間">00:00</div>\n'
-    + '    <div class="prog" id="prog">0 / ' + totalQuestions + ' 解答済み</div>\n'
-    + '    <button class="btn" id="btnSheet">解答一覧</button>\n'
-    + '    <button class="btn" id="btnPause">一時停止</button>\n'
-    + '    <button class="btn" id="btnReset">リセット</button>\n'
-    + '    <button class="btn" id="btnExport">解答を出力</button>\n'
-    + '    <button class="btn solid" id="btnGrade">採点する</button>\n'
-    + '    <button class="btn" id="btnHideBar">隠す</button>\n'
-    + "  </div>\n" + nav + "</header>\n"
-    + '<button id="barToggle">メニュー</button>\n'
-    + '<main id="main">\n' + body + "</main>\n"
-    + '<div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>\n'
-    + '<div class="toast" id="toast"></div>\n'
-    + "<script>\n" + script + "\n</" + "script>\n</body>\n</html>";
-}
-
-
-/* ================================================================
-   変換オーケストレーション
-   ================================================================ */
 var tessWorker = null;
 async function ensureWorker(){
   if(!tessWorker) tessWorker = await Tesseract.createWorker("jpn");
@@ -1338,6 +663,45 @@ async function terminateWorker(){
   }
 }
 
+/* 解答PDF → OCRテキスト（テキスト層が乏しく幾何パースも効かない場合の保険） */
+async function answerPDFOCRText(buf, worker, onPage){
+  var doc = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+  var parts = [];
+  try{
+    for(var p = 1; p <= doc.numPages; p++){
+      if(onPage) onPage(p, doc.numPages);
+      var page = await doc.getPage(p);
+      var canvas = await renderPageToCanvas(page);
+      var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
+      parts.push(ocr.lines.map(function(l){ return l.text; }).join(" "));
+      canvas.width = 0; canvas.height = 0;
+      await yieldUI();
+    }
+  } finally { doc.destroy(); }
+  return parts.join(" ");
+}
+
+/* 解答PDF → {key, points, count, method}（幾何パース優先） */
+async function parseAnswerBuf(buf){
+  var pages = await KC.extractPdfPages(pdfjsLib, buf.slice(0));
+  var joined = KC.answerJoinedText(pages);
+  if(joined.replace(/\s/g, "").length >= 100){
+    return KC.parseAnswerKeyFromPages(pages);
+  }
+  var worker = await ensureWorker();
+  var ocrText = await answerPDFOCRText(buf, worker, function(p, total){
+    setProgress("解答PDFを読み取り中…", "ページ " + p + " / " + total);
+  });
+  var scanned = KC.scanAnswerTokens(KC.tokenize(ocrText));
+  return {
+    key: scanned.key, points: scanned.points,
+    count: Object.keys(scanned.key).length, method: "ocr-scan"
+  };
+}
+
+/* ================================================================
+   変換オーケストレーション
+   ================================================================ */
 async function convertExam(opts){
   var title = opts.title, storageKey = opts.storageKey;
   var answerKey = {}, points = {};
@@ -1348,25 +712,15 @@ async function convertExam(opts){
       points = opts.keyOverride.points || {};
     } else if(opts.aBuf){
       setProgress("解答PDFを解析中…", "");
-      var aText = await answerPDFText(opts.aBuf);
-      if(aText.replace(/\s/g, "").length >= 100){
-        var parsed = scanAnswerTokens(tokenize(aText));
-        answerKey = parsed.key; points = parsed.points;
-      } else {
-        var wk = await ensureWorker();
-        var ocrText = await answerPDFOCRText(opts.aBuf, wk, function(p, total){
-          setProgress("解答PDFを読み取り中…", "ページ " + p + " / " + total);
-        });
-        var parsed2 = scanAnswerTokens(tokenize(ocrText));
-        answerKey = parsed2.key; points = parsed2.points;
-      }
+      var parsed = await parseAnswerBuf(opts.aBuf);
+      answerKey = parsed.key; points = parsed.points;
     }
 
     /* ---- 問題PDF ---- */
     var doc = await pdfjsLib.getDocument({ data: opts.qBuf.slice(0) }).promise;
     var pageCount = doc.numPages;
-    var builder = new FlowBuilder();
     var figureCount = 0, lineCount = 0;
+    var allEvents = [];
     try{
       /* テキスト層チェック（文書全体で1回） */
       setProgress("テキストを確認中…", "");
@@ -1379,73 +733,64 @@ async function convertExam(opts){
         var plain = tc0.items.map(function(it){ return it.str; }).join("");
         var stripped = plain.replace(/\s/g, "");
         totalChars += stripped.length;
-        jpChars += countJapanese(stripped);
+        jpChars += KC.countJapanese(stripped);
         pageTC.push({ tc: tc0, w: vp0.width, h: vp0.height });
       }
       var useTextLayer = totalChars >= 800 && totalChars > 0 && (jpChars / totalChars) >= 0.5;
 
       for(var p = 1; p <= pageCount; p++){
         var pageLabel = "ページ " + p + " / " + pageCount;
-        var events = [];
         if(useTextLayer){
           setProgress("組み立て中…", pageLabel);
-          var conv = linesFromTextContent(pageTC[p-1].tc, pageTC[p-1].w, pageTC[p-1].h);
-          var orderedTL = readingOrder(conv.lines);
+          var conv = KC.linesFromTextContent(pageTC[p-1].tc, pageTC[p-1].w, pageTC[p-1].h);
           lineCount += conv.lines.length;
+          var orderedTL = KC.readingOrder(conv.lines);
           orderedTL.forEach(function(line){
             line.page = p - 1;
-            if(!isNoiseLine(line)) events.push({ kind: "line", y: line.y, line: line });
+            if(!KC.isNoiseLine(line)) allEvents.push({ kind: "line", y: line.y, line: line });
           });
-          events.forEach(function(ev){ builder.addLine(ev.line); });
         } else {
           setProgress("ページを描画中…", pageLabel);
           var page = await doc.getPage(p);
           var canvas = await renderPageToCanvas(page);
           setProgress("文字を読み取り中…", pageLabel);
           var worker = await ensureWorker();
-          var ocr = await ocrCanvas(worker, canvas);
+          var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
           lineCount += ocr.lines.length;
-          var ordered = readingOrder(ocr.lines);
+          var ordered = KC.readingOrder(ocr.lines);
+          var lineEvents = [];
           ordered.forEach(function(line){
             line.page = p - 1;
-            if(!isNoiseLine(line)) events.push({ kind: "line", y: line.y, line: line });
+            if(!KC.isNoiseLine(line)) lineEvents.push({ kind: "line", y: line.y, line: line });
           });
           setProgress("図を検出中…", pageLabel);
           await yieldUI();
-          var bands = detectFigureBands(canvas, ocr.words);
+          var ctx2 = canvas.getContext("2d", { willReadFrequently: true });
+          var imgData = ctx2.getImageData(0, 0, canvas.width, canvas.height);
+          var gray = KC.grayFromRGBA(imgData.data, canvas.width, canvas.height);
+          var bands = KC.detectFigureBands(gray, canvas.width, canvas.height, ocr.words);
+          var figEvents = [];
           bands.forEach(function(band){
-            var url = cropBandToDataURL(canvas, band);
+            var url = KC.cropBandToDataURL(canvas, band);
             if(url){
               figureCount++;
-              events.push({ kind: "figure", y: band.yMin, src: url });
+              figEvents.push({ kind: "figure", y: band.yMin, page: p - 1, src: url });
             }
           });
-          /* 行と図を読み順に交互配置（同yでは行が先、元の順序で安定化） */
-          var indexed = events.map(function(ev, idx){ return { ev: ev, idx: idx }; });
-          indexed.sort(function(a, b){
-            if(Math.abs(a.ev.y - b.ev.y) > 0.0001) return a.ev.y - b.ev.y;
-            var aFig = a.ev.kind === "figure" ? 1 : 0;
-            var bFig = b.ev.kind === "figure" ? 1 : 0;
-            if(aFig !== bFig) return aFig - bFig;
-            return a.idx - b.idx;
-          });
-          indexed.forEach(function(en){
-            if(en.ev.kind === "line") builder.addLine(en.ev.line);
-            else builder.addFigure(en.ev.src, p - 1);
-          });
+          KC.mergePageEvents(lineEvents, figEvents).forEach(function(ev){ allEvents.push(ev); });
           canvas.width = 0; canvas.height = 0;
         }
         await yieldUI();
       }
     } finally { doc.destroy(); }
-    builder.finish();
+
     setProgress("組み立て中…", "");
-    var questionCount = 0;
-    builder.elements.forEach(function(e){ if(e.type === "question") questionCount++; });
-    var html = buildHTML(title, builder.elements, answerKey, points, storageKey);
+    var built = KC.buildElements(allEvents, Object.keys(answerKey).length);
+    var templates = { css: $("gen-css").textContent, js: $("gen-js").textContent };
+    var html = KC.buildHTML(title, built.elements, answerKey, points, storageKey, templates);
     return {
       generatedHTML: html, answerKey: answerKey, points: points,
-      questionCount: questionCount, pageCount: pageCount,
+      questionCount: built.questions, pageCount: pageCount,
       lineCount: lineCount, figureCount: figureCount
     };
   } finally {
