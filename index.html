@@ -101,7 +101,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v7（MuPDF描画）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v8（MuPDF描画）</p>
   </section>
 
   <!-- 取り込み -->
@@ -713,7 +713,10 @@ function renderMuPDFPageToCanvas(muDoc, pageIndex){
 
 var tessWorker = null;
 async function ensureWorker(){
-  if(!tessWorker) tessWorker = await Tesseract.createWorker("jpn");
+  if(!tessWorker) tessWorker = await Tesseract.createWorker("jpn", 1, {
+    langPath: "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main",
+    gzip: false
+  });
   return tessWorker;
 }
 async function terminateWorker(){
