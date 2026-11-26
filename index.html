@@ -101,6 +101,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v6（MuPDF描画）</p>
   </section>
 
   <!-- 取り込み -->
@@ -826,6 +827,7 @@ async function convertExam(opts){
         setProgress("描画エンジンを準備中…", "");
         try { muDoc = await openMuPDFDoc(opts.qBuf); } catch(e){ muDoc = null; }
       }
+      var renderEngine = useTextLayer ? "テキスト層" : (muDoc ? "MuPDF" : "pdf.js");
 
       for(var p = 1; p <= pageCount; p++){
         var pageLabel = "ページ " + p + " / " + pageCount;
@@ -890,7 +892,7 @@ async function convertExam(opts){
     return {
       generatedHTML: html, answerKey: answerKey, points: points,
       questionCount: built.questions, pageCount: pageCount,
-      lineCount: lineCount, figureCount: figureCount
+      lineCount: lineCount, figureCount: figureCount, renderEngine: renderEngine
     };
   } finally {
     await terminateWorker();
@@ -931,7 +933,7 @@ async function renderLibrary(){
       '<p class="etitle">' + esc(exam.title) + "</p>"
       + '<p class="emeta">' + fmtDate(exam.createdAt) + "　全" + exam.questionCount + "問"
       + (keyCount ? "　正解 " + keyCount + "問分" : "　正解 未設定") + "</p>"
-      + '<p class="ediag">' + exam.pageCount + "ページ／行 " + exam.lineCount + "／図 " + exam.figureCount + "</p>"
+      + '<p class="ediag">' + exam.pageCount + "ページ／行 " + exam.lineCount + "／図 " + exam.figureCount + (exam.renderEngine ? "／描画 " + exam.renderEngine : "") + "</p>"
       + '<div class="erow">'
       + '<button class="btn solid small" data-action="solve">解く</button>'
       + '<button class="btn small" data-action="key">正解を編集</button>'
@@ -1124,7 +1126,7 @@ $("impStart").addEventListener("click", async function(){
 renderLibrary();
 if("serviceWorker" in navigator){
   window.addEventListener("load", function(){
-    navigator.serviceWorker.register("sw.js").catch(function(){});
+    navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(function(){});
   });
 }
 </script>
