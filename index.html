@@ -651,6 +651,65 @@ async function renderPageToCanvas(page){
   return canvas;
 }
 
+/* ================================================================
+   MuPDF.js レンダラ
+   pdf.js は埋め込みサブセットフォント (Type1C, ToUnicode なし) の
+   一部ページで本文を描画できない。MuPDF は正しく描けるため、OCR 用の
+   ページ描画は MuPDF.js を使う。読み込みに失敗したら pdf.js 描画に
+   フォールバックする (ハードフェイルしない)。
+   ================================================================ */
+var MUPDF_MODULE_URL = "https://cdn.jsdelivr.net/npm/mupdf@1.28.6/dist/mupdf.js";
+var mupdfMod = null;
+var mupdfModulePromise = null;
+function loadMuPDF(){
+  if(mupdfMod) return Promise.resolve(mupdfMod);
+  if(!mupdfModulePromise){
+    mupdfModulePromise = import(MUPDF_MODULE_URL).then(function(mod){
+      mupdfMod = mod;
+      return mod;
+    });
+    /* 失敗したら次回再試行できるようにキャッシュを捨てる */
+    mupdfModulePromise.catch(function(){ mupdfModulePromise = null; });
+  }
+  return mupdfModulePromise;
+}
+/* ArrayBuffer → MuPDF Document。失敗時は throw (呼び出し側で fallback) */
+async function openMuPDFDoc(buf){
+  var mupdf = await loadMuPDF();
+  return mupdf.Document.openDocument(new Uint8Array(buf.slice(0)), "application/pdf");
+}
+/* MuPDF でページを 200dpi 相当に描画して canvas を返す (同期処理) */
+function renderMuPDFPageToCanvas(muDoc, pageIndex){
+  var page = muDoc.loadPage(pageIndex);
+  try{
+    var pixmap = page.toPixmap(
+      mupdfMod.Matrix.scale(RENDER_SCALE, RENDER_SCALE),
+      mupdfMod.ColorSpace.DeviceRGB, false);
+    try{
+      var w = pixmap.getWidth(), h = pixmap.getHeight();
+      var n = pixmap.getNumberOfComponents();
+      var hasAlpha = pixmap.getAlpha();
+      var stride = pixmap.getStride();
+      var px = pixmap.getPixels();
+      var canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      var ctx = canvas.getContext("2d", { willReadFrequently: true });
+      var img = ctx.createImageData(w, h);
+      var out = img.data;
+      for(var y = 0; y < h; y++){
+        var srow = y * stride, drow = y * w * 4;
+        for(var x = 0; x < w; x++){
+          var s = srow + x * n, d = drow + x * 4;
+          out[d] = px[s]; out[d + 1] = px[s + 1]; out[d + 2] = px[s + 2];
+          out[d + 3] = hasAlpha ? px[s + 3] : 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+      return canvas;
+    } finally { pixmap.destroy(); }
+  } finally { page.destroy(); }
+}
+
 var tessWorker = null;
 async function ensureWorker(){
   if(!tessWorker) tessWorker = await Tesseract.createWorker("jpn");
@@ -663,22 +722,44 @@ async function terminateWorker(){
   }
 }
 
-/* 解答PDF → OCRテキスト（テキスト層が乏しく幾何パースも効かない場合の保険） */
+/* 解答PDF → OCRテキスト（テキスト層が乏しく幾何パースも効かない場合の保険）
+   描画は MuPDF 優先、使えなければ pdf.js にフォールバック */
 async function answerPDFOCRText(buf, worker, onPage){
+  var muDoc = null;
+  try { muDoc = await openMuPDFDoc(buf); } catch(e){ muDoc = null; }
+  if(muDoc){
+    try{
+      var parts = [];
+      var n = muDoc.countPages();
+      for(var p = 1; p <= n; p++){
+        if(onPage) onPage(p, n);
+        var canvas = renderMuPDFPageToCanvas(muDoc, p - 1);
+        var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
+        parts.push(ocr.lines.map(function(l){ return l.text; }).join(" "));
+        canvas.width = 0; canvas.height = 0;
+        await yieldUI();
+      }
+      return parts.join(" ");
+    } catch(e){
+      /* 途中で失敗したら pdf.js 描画でやり直す */
+    } finally {
+      try { muDoc.destroy(); } catch(e){}
+    }
+  }
   var doc = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-  var parts = [];
+  var parts2 = [];
   try{
-    for(var p = 1; p <= doc.numPages; p++){
-      if(onPage) onPage(p, doc.numPages);
-      var page = await doc.getPage(p);
-      var canvas = await renderPageToCanvas(page);
-      var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
-      parts.push(ocr.lines.map(function(l){ return l.text; }).join(" "));
-      canvas.width = 0; canvas.height = 0;
+    for(var p2 = 1; p2 <= doc.numPages; p2++){
+      if(onPage) onPage(p2, doc.numPages);
+      var page = await doc.getPage(p2);
+      var canvas2 = await renderPageToCanvas(page);
+      var ocr2 = await KC.ocrImage(worker, canvas2, canvas2.width, canvas2.height);
+      parts2.push(ocr2.lines.map(function(l){ return l.text; }).join(" "));
+      canvas2.width = 0; canvas2.height = 0;
       await yieldUI();
     }
   } finally { doc.destroy(); }
-  return parts.join(" ");
+  return parts2.join(" ");
 }
 
 /* 解答PDF → {key, points, count, method}（幾何パース優先） */
@@ -721,6 +802,7 @@ async function convertExam(opts){
     var pageCount = doc.numPages;
     var figureCount = 0, lineCount = 0;
     var allEvents = [];
+    var muDoc = null; /* OCR パス用 MuPDF 文書 (開けなければ null = pdf.js 描画) */
     try{
       /* テキスト層チェック（文書全体で1回） */
       setProgress("テキストを確認中…", "");
@@ -738,6 +820,13 @@ async function convertExam(opts){
       }
       var useTextLayer = totalChars >= 800 && totalChars > 0 && (jpChars / totalChars) >= 0.5;
 
+      /* OCR パスでは描画を MuPDF に任せる (pdf.js は一部ページで本文が欠ける)。
+         MuPDF が読み込めない環境では従来どおり pdf.js 描画にフォールバック。 */
+      if(!useTextLayer){
+        setProgress("描画エンジンを準備中…", "");
+        try { muDoc = await openMuPDFDoc(opts.qBuf); } catch(e){ muDoc = null; }
+      }
+
       for(var p = 1; p <= pageCount; p++){
         var pageLabel = "ページ " + p + " / " + pageCount;
         if(useTextLayer){
@@ -751,8 +840,15 @@ async function convertExam(opts){
           });
         } else {
           setProgress("ページを描画中…", pageLabel);
-          var page = await doc.getPage(p);
-          var canvas = await renderPageToCanvas(page);
+          var canvas = null;
+          if(muDoc){
+            try { canvas = renderMuPDFPageToCanvas(muDoc, p - 1); }
+            catch(e){ canvas = null; }
+          }
+          if(!canvas){
+            var page = await doc.getPage(p);
+            canvas = await renderPageToCanvas(page);
+          }
           setProgress("文字を読み取り中…", pageLabel);
           var worker = await ensureWorker();
           var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
@@ -782,7 +878,10 @@ async function convertExam(opts){
         }
         await yieldUI();
       }
-    } finally { doc.destroy(); }
+    } finally {
+      doc.destroy();
+      if(muDoc){ try { muDoc.destroy(); } catch(e){} }
+    }
 
     setProgress("組み立て中…", "");
     var built = KC.buildElements(allEvents, Object.keys(answerKey).length);
