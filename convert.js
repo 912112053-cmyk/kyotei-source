@@ -451,6 +451,8 @@ function readingOrder(lines){
 /* 唯一、捨ててよい行: ページ上下端の単独ページ番号 */
 function isNoiseLine(line){
   var text = line.text.replace(/^\s+|\s+$/g, "");
+  /* フッターの通し番号コード (2202一79) を含む短い行は柱・ページ番号の残骸 */
+  if(text.replace(/\s/g, "").length <= 40 && /\(\d{3,4}[一\-]\d+\)/.test(text)) return true;
   if(!text || text.length > 8) return false;
   if(!/[0-9]/.test(text)) return false;
   if(!/^[0-9\-−–—― 　・\/]+$/.test(text)) return false;
@@ -493,6 +495,122 @@ function choiceStart(rawLine){
     return { value: v2, text: rest3 };
   }
   return null;
+}
+
+/* ================================================================
+   化けマーカー耐性のある選択肢行展開
+   OCR では選択肢の丸数字が 《⑳ / @⑳ / ⑧⑳ / ⑩0 のように化けたり、
+   丸ごと欠落したりする。また表組みの選択肢は複数が1行に詰まる。
+   1行 → 選択肢テキストの配列に展開する（選択肢行でなければ null）。
+   値（番号）は使わない（採番は位置で行う）ため、化けたマーカーは
+   「次の選択肢の開始」という位置情報としてだけ使う。
+   ================================================================ */
+/* 先頭のマーカー塊（丸数字・記号の連続 + 任意の数字1字 + 空白）を除去。
+   除去できなければ null。空白が必須なので「③の資料…」のような
+   題幹行の先頭丸数字は除去しない（= 選択肢と誤認しない）。 */
+function stripMarkerCluster(s){
+  var m = s.match(/^[\s　]*[①-⑳@＠《》〈〉○◯◎●・]+[0-9０-９]?[\s　]+/);
+  if(!m) return null;
+  return s.slice(m[0].length);
+}
+
+/* 組合せ選択肢の開始パターンか（ラベル対で始まる行） */
+function comboStart(line){
+  /* あ・う 型（短形） */
+  if(/^[あいうえおぁぃぅぇ][・][あいうえおぁぃぅぇ]/.test(line)) return true;
+  /* ぁーX 型（かなラベル + ダッシュ + 英字ラベル） */
+  if(/^[あいうえおぁぃぅぇ][ー一][\s　]*[A-ZＡ-Ｚ]/.test(line)) return true;
+  /* アー…イー… 型（カタカナラベルが2つ現れる） */
+  if(/^[アイウエオ][ー一]/.test(line) && /[アイウエオ][ー一]/.test(line.slice(2))) return true;
+  return false;
+}
+
+/* 1つの断片の中に組合せが繰り返し現れたら分割する */
+function splitComboPiece(text){
+  var pats = [
+    /[あいうえおぁぃぅぇ]\s*[・]\s*[あいうえおぁぃぅぇ]/g,   /* あ・う */
+    /[あいうえおぁぃぅぇ][ー一][\s　]*[A-ZＡ-Ｚ]/g           /* ぁーX */
+  ];
+  var result = [text];
+  pats.forEach(function(pat){
+    var next = [];
+    result.forEach(function(piece){
+      pat.lastIndex = 0;
+      var matches = [], mm;
+      while((mm = pat.exec(piece)) !== null) matches.push(mm.index);
+      if(matches.length < 2){ next.push(piece); return; }
+      var prev = 0;
+      for(var i = 1; i < matches.length; i++){
+        next.push(piece.slice(prev, matches[i]).replace(/^\s+|\s+$/g, ""));
+        prev = matches[i];
+      }
+      next.push(piece.slice(prev).replace(/^\s+|\s+$/g, ""));
+    });
+    result = next.filter(function(p){ return p; });
+  });
+  /* 先頭ラベルの二重化け (あぁ・え → ぁ・え) を軽く正規化 */
+  return result.map(function(p){
+    return p.replace(/^([あいうえお])([ぁぃぅぇ])・/, "$2・");
+  });
+}
+
+/* 選択肢テキストを、埋め込まれたマーカーの直前で分割する */
+function splitChoicePieces(text){
+  var re = /[@＠《》〈〉]?[①-⑳]/g;
+  var cuts = [], m;
+  while((m = re.exec(text)) !== null){
+    if(m.index > 0) cuts.push(m.index);
+  }
+  var segs = [], prev = 0;
+  cuts.forEach(function(c){ segs.push(text.slice(prev, c)); prev = c; });
+  segs.push(text.slice(prev));
+  var out = [];
+  segs.forEach(function(seg){
+    var cleaned = stripMarkerCluster(seg);
+    var t = (cleaned !== null ? cleaned : seg).replace(/^\s+|\s+$/g, "");
+    if(!t) return;
+    splitComboPiece(t).forEach(function(p){ if(p) out.push(p); });
+  });
+  return out;
+}
+
+/* 1行を選択肢テキストの配列に展開する。選択肢行でなければ null。
+   opts = { inGroup: 選択肢グループ内か, comboContext: 題幹が組合せ問題か } */
+function expandLineToChoices(rawText, opts){
+  opts = opts || {};
+  var line = rawText.replace(/^\s+|\s+$/g, "");
+  if(!line) return null;
+  var rest = null;
+  var strict = choiceStart(line);
+  if(strict){
+    rest = strict.text;
+    var stripped = stripMarkerCluster(rest);
+    if(stripped !== null) rest = stripped;
+    /* ⑩0 のように丸数字の直後に数字が残った場合の除去 */
+    if(/^[①-⑳][0-9０-９][\s　]/.test(line)){
+      rest = rest.replace(/^[0-9０-９][\s　]+/, "");
+    }
+  } else {
+    var stripped2 = stripMarkerCluster(line);
+    if(stripped2 !== null && /[①-⑳]/.test(line.slice(0, 6))){
+      rest = stripped2;
+    }
+  }
+  if(rest === null && opts.inGroup){
+    /* グループ内: 単独の化け記号 + 空白 で始まる行も選択肢 */
+    var g = line.match(/^[@＠《○◯人][\s　]+(.+)$/);
+    if(g) rest = g[1];
+  }
+  if(rest === null && comboStart(line) && (opts.inGroup || opts.comboContext)){
+    rest = line;
+  }
+  if(rest === null) return null;
+  rest = rest.replace(/^\s+|\s+$/g, "");
+  if(!rest) return null;
+  /* 題幹の範囲表記（次の①〜④のうちから…）を誤認しない */
+  if(rest.indexOf("のうちから") >= 0 && line.length <= 40) return null;
+  var pieces = splitChoicePieces(rest);
+  return pieces.length ? pieces : null;
 }
 
 function isQuestionHeader(text){
@@ -585,9 +703,17 @@ FlowBuilder.prototype.addLine = function(line){
     this.flushParagraph();
     return;
   }
-  var choice = choiceStart(line.text);
-  if(choice){
-    this.addChoice(choice.text, line);
+  var comboCtx = false;
+  if(this.openChoices === null){
+    var stemText = this.paraBuffer + this.pendingParas.map(function(p){ return p.text; }).join("");
+    comboCtx = stemText.indexOf("組合せ") >= 0;
+  }
+  var pieces = expandLineToChoices(line.text, {
+    inGroup: this.openChoices !== null, comboContext: comboCtx
+  });
+  if(pieces){
+    var self = this;
+    pieces.forEach(function(p){ self.addChoice(p, line); });
     return;
   }
   if(this.openChoices !== null){
@@ -999,6 +1125,10 @@ var KyoteiConvert = {
   readingOrder: readingOrder,
   isNoiseLine: isNoiseLine,
   choiceStart: choiceStart,
+  stripMarkerCluster: stripMarkerCluster,
+  comboStart: comboStart,
+  splitChoicePieces: splitChoicePieces,
+  expandLineToChoices: expandLineToChoices,
   isQuestionHeader: isQuestionHeader,
   isQuestionStartLine: isQuestionStartLine,
   FlowBuilder: FlowBuilder,
