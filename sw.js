@@ -2,11 +2,11 @@
    - アプリ本体（同一オリジン）は network-first: 常に最新を取りに行き、
      取れたらキャッシュを更新。オフライン時のみキャッシュを使う
      （旧版 index がキャッシュに張り付いて更新が届かない事故の対策）
-   - CDN ライブラリ（pdf.js / tesseract.js / wasm / MuPDF / 学習データ）は
+   - CDN ライブラリ（pdf.js / MuPDF wasm）は
      cache-first で実行時キャッシュ（オフライン対応・高速化） */
 "use strict";
 
-var CACHE_NAME = "kyotei-web-v10";
+var CACHE_NAME = "kyotei-web-v11";
 
 var PRECACHE_URLS = [
   "./",
@@ -21,9 +21,7 @@ var PRECACHE_URLS = [
 var CDN_HOSTS = [
   "cdnjs.cloudflare.com",
   "cdn.jsdelivr.net",
-  "unpkg.com",
-  "tessdata.projectnaptha.com",
-  "raw.githubusercontent.com"
+  "unpkg.com"
 ];
 
 self.addEventListener("install", function (event) {
