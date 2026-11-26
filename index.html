@@ -10,7 +10,6 @@
 <link rel="icon" type="image/png" href="icon-192.png">
 <link rel="apple-touch-icon" href="AppIcon1024.png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
 <style>
   :root{
     --bar:#2b2b28; --bar-tx:#f2f0e9;
@@ -30,6 +29,7 @@
   #appbar .apptitle{font-size:19px;font-weight:600;letter-spacing:.12em}
   #appbar .appsub{font-size:11.5px;opacity:.72}
   main{max-width:860px;margin:0 auto;padding:20px 14px 80px}
+  main[hidden]{display:none}
   h2{font-size:18px;margin:4px 0 14px;letter-spacing:.04em}
   .muted{color:var(--mut);font-size:12.5px;line-height:1.7}
   .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
@@ -45,8 +45,7 @@
   .exam-card{background:var(--card);border:1px solid var(--line);border-radius:10px;
     padding:16px 18px;margin:0 0 14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
   .exam-card .etitle{font-size:16.5px;font-weight:600;margin:0 0 4px;word-break:break-all}
-  .exam-card .emeta{font-size:12.5px;color:var(--mut);margin:0 0 3px}
-  .exam-card .ediag{font-size:12px;color:var(--mut);margin:0 0 12px}
+  .exam-card .emeta{font-size:12.5px;color:var(--mut);margin:0 0 12px}
   .exam-card .erow{display:flex;gap:8px;flex-wrap:wrap}
   .fld{display:block;margin:0 0 18px}
   .fld>span{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
@@ -56,12 +55,6 @@
     padding:10px 14px;cursor:pointer;font-size:13.5px;background:var(--card);max-width:100%}
   .filebtn .fname{color:var(--mut);font-size:12.5px;word-break:break-all}
   .visually-hidden{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
-  #view-solve{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;background:#fff}
-  #view-solve[hidden]{display:none}
-  .solvebar{background:var(--bar);color:var(--bar-tx);display:flex;align-items:center;gap:12px;
-    padding:8px 12px;flex:none}
-  .solvebar .stitle{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #solveFrame{flex:1;border:0;width:100%;background:#fff}
   #progressOverlay{position:fixed;inset:0;z-index:60;background:rgba(15,14,12,.55);
     display:flex;align-items:center;justify-content:center;padding:20px}
   #progressOverlay[hidden]{display:none}
@@ -71,17 +64,74 @@
     border:4px solid var(--line);border-top-color:var(--accent);animation:spin 0.9s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   #progStage{font-size:15px;font-weight:600}
-  .keyrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dotted var(--line)}
-  .keyrow .kno{width:52px;flex:none;font-weight:600}
-  .keyrow select,.keyrow input[type=number]{font:inherit;font-size:14px;padding:6px 8px;
-    border:1px solid var(--line);border-radius:5px;background:var(--card);color:var(--ink)}
-  .keyrow input[type=number]{width:76px}
-  .keyrow label{font-size:12px;color:var(--mut)}
   #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
     background:#2b2b28;color:#f2f0e9;font-size:13.5px;padding:10px 20px;border-radius:6px;opacity:0;
     pointer-events:none;transition:.3s;z-index:90;box-shadow:0 8px 24px rgba(0,0,0,.35);max-width:88vw;text-align:center}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
   .err{color:#a12626;font-size:13px;line-height:1.7;white-space:pre-wrap}
+
+  /* ================= 解く画面（元のページ画像） ================= */
+  #view-solve{position:fixed;inset:0;z-index:40;display:flex;flex-direction:column;background:#55534c}
+  #view-solve[hidden]{display:none}
+  .solvebar{background:var(--bar);color:var(--bar-tx);display:flex;align-items:center;gap:8px;
+    padding:8px 12px;flex:none;flex-wrap:wrap}
+  .solvebar[hidden]{display:none}
+  .solvebar .stitle{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;flex:1;min-width:60px}
+  .solvebar .stimer{font-variant-numeric:tabular-nums;font-size:14.5px;font-weight:600;
+    background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);
+    padding:3px 10px;border-radius:3px;letter-spacing:.05em}
+  #solveMenuPill{position:absolute;top:calc(env(safe-area-inset-top,0px) + 10px);right:10px;z-index:45;
+    background:var(--bar);color:var(--bar-tx);border:1px solid rgba(255,255,255,.35);
+    border-radius:999px;padding:7px 16px;font-size:12.5px;font-family:inherit;
+    box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:pointer}
+  #solveMenuPill[hidden]{display:none}
+  #pagesScroll{flex:1;overflow:auto;-webkit-overflow-scrolling:touch}
+  #pagesInner{margin:0 auto;padding:14px 10px 40px}
+  #pagesInner img{display:block;width:100%;height:auto;margin:0 auto 14px;background:#fff;
+    box-shadow:0 2px 10px rgba(0,0,0,.45)}
+
+  /* ================= マークシート ================= */
+  #sheetOverlay{position:fixed;inset:0;z-index:50;background:rgba(15,14,12,.62);
+    overflow:auto;padding:18px 10px 30px}
+  #sheetOverlay[hidden]{display:none}
+  .sheet{background:#fff;color:#161513;max-width:700px;margin:0 auto;
+    border:1.6px solid #161513;padding:20px 16px 22px;
+    box-shadow:0 18px 50px rgba(0,0,0,.45)}
+  .sheet-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    border-bottom:2.2px solid #161513;padding-bottom:8px;margin-bottom:6px}
+  .sheet-head .shtitle{font-size:15px;font-weight:600;word-break:break-all}
+  .sheet-head .shlabel{font-size:13px;font-weight:600;letter-spacing:.35em;flex:none}
+  #scoreBanner{display:none;border:1.6px solid #161513;margin:10px 0 4px;padding:8px 12px;
+    text-align:center;font-size:15px}
+  #scoreBanner.show{display:block}
+  #scoreBanner .big{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}
+  #scoreBanner small{font-size:13px;color:#55524b}
+  .msblocks{display:flex;flex-wrap:wrap;gap:18px 22px;margin-top:8px}
+  .msblock{flex:1 1 300px;min-width:280px}
+  .msgrid{display:grid;grid-template-columns:40px repeat(9,1fr) 26px;align-items:center}
+  .msgrid.head{border-bottom:1.6px solid #161513;padding:3px 0 5px}
+  .msgrid.head .hc{text-align:center;font-size:12.5px;font-weight:600;color:#161513}
+  .msgrid.head .hc.num{text-align:center;font-size:11.5px;letter-spacing:.05em}
+  .msrow{border-bottom:.8px solid #a9a69c;padding:4px 0}
+  .msrow .rno{text-align:center;font-weight:700;font-size:14.5px;border-right:1.2px solid #161513;
+    align-self:stretch;display:flex;align-items:center;justify-content:center}
+  .msrow .res{text-align:center;font-size:15px;font-weight:700}
+  .msrow .res.ok{color:#1d6b45}
+  .msrow .res.ng{color:#a12626}
+  .msrow .res.blank{color:#8a867c}
+  .bubble{appearance:none;background:transparent;border:none;padding:2px 0;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;font-family:inherit}
+  .bubble .ov{display:flex;align-items:center;justify-content:center;
+    width:min(32px,100%);height:23px;border:1.6px solid #55534c;border-radius:50%;
+    font-size:12px;color:#a3a099;line-height:1}
+  .bubble.filled .ov{background:#2e2c29;border-color:#2e2c29;color:#2e2c29}
+  .bubble.correct-hint .ov{border-color:#c02727;box-shadow:0 0 0 1.6px #c02727;color:#c02727;font-weight:700}
+  .sheet-foot{margin-top:16px;border-top:2.2px solid #161513;padding-top:12px}
+  .sheet-foot .unmarked{font-size:13.5px;margin-bottom:10px}
+  .sheet-foot .srow{display:flex;gap:8px;flex-wrap:wrap}
+  .sheet-foot .btn{border-color:#8a867c;color:#161513;background:#fff}
+  .sheet-foot .btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
 </style>
 </head>
 <body>
@@ -89,7 +139,7 @@
 <header id="appbar">
   <img src="icon-192.png" alt="">
   <span class="apptitle">共テ</span>
-  <span class="appsub">模試PDFを、タップで解ける形に</span>
+  <span class="appsub">問題は元のページのまま、解答はマークシートで</span>
 </header>
 
 <main id="mainArea">
@@ -101,7 +151,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v10（MuPDF描画）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v11（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -116,35 +166,49 @@
     <div class="fld"><span>解答PDF（任意）</span>
       <label class="filebtn"><input type="file" id="impA" accept="application/pdf" class="visually-hidden"><span>PDFを選ぶ</span><span class="fname" id="impAName"></span></label>
       <button class="btn small" id="impAClear" hidden>解答PDFを外す</button>
-      <p class="muted">解答PDFがない場合は、採点なしで解く形になります。</p>
+      <p class="muted">解答PDFがあると、マークシートで採点できます。ない場合は、採点なしで解く形になります。</p>
     </div>
     <p class="err" id="impError"></p>
     <div class="row">
       <button class="btn" id="impCancel">キャンセル</button>
       <button class="btn solid" id="impStart">取り込む</button>
     </div>
-    <p class="muted">変換はすべてこの端末の中（ブラウザ内）で行われます。PDFが外部サーバーに送信されることはありません。初回は読み取り用のデータ取得で通信が発生します。</p>
-  </section>
-
-  <!-- 正解・配点の編集 -->
-  <section id="view-keyedit" class="view" hidden>
-    <h2>正解・配点の編集</h2>
-    <p class="muted" id="keyEditTitle"></p>
-    <div id="keyRows"></div>
-    <div class="row">
-      <button class="btn" id="keyCancel">キャンセル</button>
-      <button class="btn solid" id="keySave">保存して再生成</button>
-    </div>
+    <p class="muted">変換はすべてこの端末の中（ブラウザ内）で行われます。PDFが外部サーバーに送信されることはありません。初回は描画エンジンの取得で通信が発生します。</p>
   </section>
 </main>
 
-<!-- 解く画面 -->
+<!-- 解く画面：元のページ画像 + マークシート -->
 <section id="view-solve" hidden>
-  <div class="solvebar">
+  <div class="solvebar" id="solveBar">
     <button class="btn ghost small" id="solveBack">← 戻る</button>
     <span class="stitle" id="solveTitle"></span>
+    <span class="stimer" id="solveTimer">00:00</span>
+    <button class="btn ghost small" id="btnZoom">ズーム 100%</button>
+    <button class="btn ghost small" id="btnSheet">マークシート</button>
+    <button class="btn ghost small" id="btnHideBar">隠す</button>
   </div>
-  <iframe id="solveFrame" title="問題"></iframe>
+  <button id="solveMenuPill" hidden>メニュー</button>
+  <div id="pagesScroll"><div id="pagesInner"></div></div>
+
+  <!-- マークシート（本物の共テ解答用紙形式：全行9択の楕円） -->
+  <div id="sheetOverlay" hidden>
+    <div class="sheet">
+      <div class="sheet-head">
+        <span class="shtitle" id="sheetTitle"></span>
+        <span class="shlabel">解答用紙</span>
+      </div>
+      <div id="scoreBanner"></div>
+      <div class="msblocks" id="msBlocks"></div>
+      <div class="sheet-foot">
+        <div class="unmarked" id="unmarkedLine"></div>
+        <div class="srow">
+          <button class="btn" id="sheetClose">閉じる</button>
+          <button class="btn solid" id="sheetGrade">採点する</button>
+          <button class="btn" id="sheetExport" hidden>解答を出力</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
 
 <!-- 変換プログレス -->
@@ -158,409 +222,14 @@
 
 <div id="toast"></div>
 
-<!-- ===== 生成HTML用 CSS テンプレート（Swift版 Detection.swift の htmlCSS を移植） ===== -->
-<script type="text/plain" id="gen-css">
-:root{
-  --desk:#c9c6bd; --desk2:#e3e0d7;
-  --bar:#2b2b28; --bar-tx:#f2f0e9;
-  --accent:#8c2f2f; --accent-soft:#f3e6e3;
-  --ok:#1d6b45; --ok-bg:#e4efe7; --ng:#a12626; --ng-bg:#f7e5e3;
-  --flag:#b07d10; --flag-bg:#faf0d7;
-  --line:#33312d; --mut:#6d6a61;
-}
-@media (prefers-color-scheme: dark){
-  :root{ --desk:#161614; --desk2:#1e1e1b; --bar:#101010; --accent:#d98a80; --accent-soft:#3a2624; }
-}
-*{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;background:linear-gradient(180deg,var(--desk2),var(--desk));font-family:"Hiragino Kaku Gothic ProN","Hiragino Sans","Yu Gothic UI","Yu Gothic","Noto Sans JP",sans-serif;color:#1a1a1a;min-height:100vh}
-.bar{position:sticky;top:0;z-index:50;background:var(--bar);color:var(--bar-tx);box-shadow:0 2px 10px rgba(0,0,0,.35)}
-#barToggle{position:fixed;top:calc(env(safe-area-inset-top,0px) + 8px);right:10px;z-index:70;display:none;background:var(--bar);color:var(--bar-tx);border:1px solid rgba(255,255,255,.35);border-radius:999px;padding:6px 14px;font-size:12px;font-family:inherit;box-shadow:0 2px 8px rgba(0,0,0,.3)}
-body.bar-hidden .bar{display:none}
-body.bar-hidden #barToggle{display:block}
-.bar-in{max-width:920px;margin:0 auto;display:flex;align-items:center;gap:10px;padding:9px 14px;flex-wrap:wrap}
-.bar .ttl{font-family:"Hiragino Mincho ProN","YuMincho","Noto Serif JP",serif;font-weight:500;font-size:15px;letter-spacing:.05em}
-.bar .sub{font-size:11px;opacity:.75}
-.timer{margin-left:auto;font-variant-numeric:tabular-nums;font-weight:500;font-size:17px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.25);padding:3px 12px;border-radius:3px;letter-spacing:.06em}
-.prog{font-size:12px;opacity:.92;font-variant-numeric:tabular-nums}
-.btn{appearance:none;border:1px solid rgba(255,255,255,.35);background:transparent;color:var(--bar-tx);font-family:inherit;font-size:13px;font-weight:500;padding:6px 14px;border-radius:3px;cursor:pointer}
-.btn:hover{background:rgba(255,255,255,.12)}
-.btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.solid:hover{filter:brightness(1.18)}
-.btn:disabled{opacity:.45;cursor:default}
-.navrow{max-width:920px;margin:0 auto;display:flex;gap:6px;padding:0 14px 10px;flex-wrap:wrap}
-.navrow button{appearance:none;border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.06);color:var(--bar-tx);font-family:inherit;font-size:12px;padding:4px 11px;border-radius:999px;cursor:pointer}
-.navrow button:hover{background:rgba(255,255,255,.16)}
-main{max-width:920px;margin:0 auto;padding:26px 10px 70px}
-.sheet{position:relative;background:#fff;color:#161513;margin:0 auto 30px;max-width:760px;
-  padding:64px 12.4% 72px 13.2%;
-  box-shadow:0 1px 2px rgba(0,0,0,.22),0 10px 30px rgba(0,0,0,.25);
-  font-family:"Hiragino Mincho ProN","Hiragino Mincho Pro","YuMincho","Yu Mincho","MS PMincho","Noto Serif JP",serif;
-  font-weight:400;font-size:14px;line-height:1.95;text-align:justify}
-.sheet .runhead{position:absolute;top:26px;left:13.2%;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-weight:500;font-size:12.5px;letter-spacing:.06em}
-.sheet .pgno{position:absolute;bottom:26px;left:0;right:0;text-align:center;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:11.5px;color:#161513}
-.bigtitle{text-align:center;margin:16px 0 8px}
-.bigtitle h1{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-weight:500;font-size:23px;letter-spacing:.16em;margin:0 0 10px}
-.bigtitle .rng{font-size:14.5px}
-.goth{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-weight:500}
-p{margin:0 0 8px}
-.q{margin:0 0 24px;scroll-margin-top:120px}
-.qstem{margin:0 0 6px}
-.qno{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-weight:500}
-.ansbox{display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;border:1.4px solid var(--line);font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-weight:500;font-size:13px;padding:0 2px;background:#fff;vertical-align:baseline;margin-left:.4em}
-.ansbox.filled{background:#2b2b28;color:#fff}
-.flagbtn{float:right;appearance:none;border:1px solid #b6b1a4;background:#fff;color:#7a766a;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:11px;padding:2px 9px;border-radius:999px;cursor:pointer;margin-top:4px}
-.flagbtn.on{background:var(--flag-bg);border-color:var(--flag);color:var(--flag)}
-.choices{margin:8px 0 0;padding:0;list-style:none}
-.choices li{margin:0 0 4px}
-.choices button{display:flex;gap:9px;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:3px;padding:4px 8px;font:inherit;color:inherit;cursor:pointer;line-height:1.8;align-items:baseline}
-.choices button:hover{border-color:#c4bfb0;background:#fbfaf5}
-.choices .mk{flex:none;font-size:14.5px;transform:translateY(1px)}
-.choices button.sel{background:var(--accent-soft);border-color:var(--accent)}
-body.done .choices button{cursor:default}
-body.done .choices button.correct{background:var(--ok-bg);border-color:var(--ok)}
-body.done .choices button.wrong{background:var(--ng-bg);border-color:var(--ng)}
-.expl{display:none;margin-top:10px;border-top:1px dashed #8f8b80;padding-top:8px;font-size:13px;line-height:1.85}
-body.done .expl{display:block}
-.expl .verdict{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-weight:500;font-size:12.5px;margin-bottom:3px}
-.expl .verdict.ok{color:var(--ok)} .expl .verdict.ng{color:var(--ng)} .expl .verdict.un{color:var(--mut)}
-.fig{margin:12px 0 16px;text-align:center}
-.fig img{max-width:100%;height:auto}
-.overlay{position:fixed;inset:0;background:rgba(15,14,12,.62);z-index:80;display:none;align-items:flex-start;justify-content:center;padding:26px 12px;overflow:auto}
-.overlay.open{display:flex}
-.panel{background:#fff;color:#161513;max-width:660px;width:100%;padding:26px 28px 30px;box-shadow:0 18px 50px rgba(0,0,0,.4);font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif}
-.panel h2{font-family:"Hiragino Mincho ProN","YuMincho","Noto Serif JP",serif;font-weight:500;font-size:20px;margin:0 0 8px;letter-spacing:.05em}
-.panel .big{font-size:38px;font-weight:500;font-variant-numeric:tabular-nums}
-.panel .big small{font-size:15px;color:var(--mut)}
-.grid32{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin:16px 0}
-.grid32 button{position:relative;appearance:none;border:1.1px solid #8a867c;background:#fff;font-family:inherit;padding:5px 0;cursor:pointer;font-size:11px;line-height:1.45;border-radius:2px;color:#161513}
-.grid32 button b{display:block;font-size:14px;font-weight:500}
-.grid32 button.empty{color:#b3afa2}
-.grid32 button.answered{border-color:var(--accent);background:var(--accent-soft)}
-.grid32 button.flagged{box-shadow:inset 0 0 0 2px var(--flag)}
-.grid32 button.ok{background:var(--ok-bg);border-color:var(--ok)}
-.grid32 button.ng{background:var(--ng-bg);border-color:var(--ng)}
-.breakdown{font-size:13.5px;line-height:2;border-top:1px solid #ccc;margin-top:12px;padding-top:10px}
-.breakdown .rowline{display:flex;justify-content:space-between;border-bottom:1px dotted #d8d4c8;cursor:pointer}
-.panel .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
-.panel .row .btn{border-color:#8a867c;color:#161513}
-.panel .row .btn.solid{color:#fff;border-color:var(--accent)}
-.panel .warnlist{font-size:13.5px;line-height:1.9}
-.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:#2b2b28;color:#f2f0e9;font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",sans-serif;font-size:13.5px;padding:10px 20px;border-radius:3px;opacity:0;pointer-events:none;transition:.3s;z-index:90;box-shadow:0 8px 24px rgba(0,0,0,.35)}
-.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-@media(max-width:680px){
-  .sheet{padding:52px 8% 60px 9%;font-size:13.4px}
-  .sheet .runhead{left:9%}
-  .bigtitle h1{font-size:18px}
-  .grid32{grid-template-columns:repeat(4,1fr)}
-  .bar .sub{display:none}
-}
-</script>
-
-<!-- ===== 生成HTML用 JS テンプレート（Swift版 htmlScript を移植。保存は localStorage、出力は共有/コピー） ===== -->
-<script type="text/plain" id="gen-js">
-var TITLE = __TITLE__;
-var TOTAL = __TOTAL__;
-var ANS = {__ANS__};
-var PTS = {__PTS__};
-var EXPL = {};
-var SKEY = __STORAGE_KEY__;
-var MARKS = ["","①","②","③","④","⑤","⑥","⑦","⑧","⑨","⑩","⑪","⑫","⑬","⑭","⑮","⑯","⑰","⑱","⑲","⑳"];
-var answers = {}, flags = {}, graded = false;
-
-/* ---------- progress persistence (localStorage, per exam) ---------- */
-function saveState(){
-  try{ localStorage.setItem(SKEY, JSON.stringify({a:answers, f:flags, e:elapsed, g:graded})); }catch(err){}
-}
-function loadState(){
-  var s = null;
-  try{ s = JSON.parse(localStorage.getItem(SKEY) || "null"); }catch(err){}
-  if(!s) return;
-  answers = s.a || {}; flags = s.f || {}; elapsed = s.e || 0;
-  document.querySelectorAll(".choices").forEach(function(ul){
-    var q = parseInt(ul.getAttribute("data-q"),10);
-    ul.querySelectorAll("button").forEach(function(b){
-      if(answers[q] === parseInt(b.getAttribute("data-v"),10)) b.classList.add("sel");
-    });
-  });
-  document.querySelectorAll(".flagbtn").forEach(function(b){
-    var n = parseInt(b.getAttribute("data-flag"),10);
-    if(flags[n]){ b.classList.add("on"); b.textContent = "見直し中"; }
-  });
-  if(s.g){ window.__silentGrade = true; doGrade(); window.__silentGrade = false; }
-}
-
-/* ---------- timer (elapsed, count-up) ---------- */
-var elapsed = 0, timerId = null, paused = false;
-function fmt(s){ var m = Math.floor(s/60), ss = s%60; return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss; }
-function drawTimer(){ document.getElementById("timer").textContent = fmt(elapsed); }
-function startTimer(){
-  if(timerId) return;
-  timerId = setInterval(function(){
-    if(paused || graded) return;
-    elapsed++;
-    drawTimer();
-    if(elapsed % 5 === 0) saveState();
-  },1000);
-}
-document.getElementById("btnPause").addEventListener("click", function(){
-  paused = !paused;
-  this.textContent = paused ? "再開する" : "一時停止";
-  saveState();
-  toast(paused ? "タイマーを一時停止しました" : "タイマーを再開しました");
-});
-
-/* ---------- selection ---------- */
-function answeredCount(){
-  var c = 0;
-  for(var n=1;n<=TOTAL;n++) if(answers[n]) c++;
-  return c;
-}
-function updateProg(){
-  document.getElementById("prog").textContent = answeredCount() + " / " + TOTAL + " 解答済み";
-  for(var n=1;n<=TOTAL;n++){
-    var box = document.querySelector('[data-box="'+n+'"]');
-    if(box) box.classList.toggle("filled", !!answers[n]);
-  }
-}
-document.querySelectorAll(".choices").forEach(function(ul){
-  var q = parseInt(ul.getAttribute("data-q"),10);
-  ul.querySelectorAll("button").forEach(function(btn){
-    btn.addEventListener("click", function(){
-      if(graded) return;
-      var v = parseInt(btn.getAttribute("data-v"),10);
-      if(answers[q]===v){ delete answers[q]; btn.classList.remove("sel"); }
-      else{
-        answers[q]=v;
-        ul.querySelectorAll("button").forEach(function(b){ b.classList.remove("sel"); });
-        btn.classList.add("sel");
-      }
-      updateProg();
-      saveState();
-    });
-  });
-});
-document.querySelectorAll(".flagbtn").forEach(function(b){
-  b.addEventListener("click", function(){
-    var n = parseInt(b.getAttribute("data-flag"),10);
-    flags[n] = !flags[n];
-    if(!flags[n]) delete flags[n];
-    b.classList.toggle("on", !!flags[n]);
-    b.textContent = flags[n] ? "見直し中" : "見直し";
-    saveState();
-  });
-});
-
-/* ---------- overlay / grid ---------- */
-var overlay = document.getElementById("overlay"), panel = document.getElementById("panel");
-function closeOverlay(){ overlay.classList.remove("open"); }
-overlay.addEventListener("click", function(e){ if(e.target===overlay) closeOverlay(); });
-function gridHTML(mode){
-  var h = '<div class="grid32">';
-  for(var n=1;n<=TOTAL;n++){
-    var cls = "";
-    if(mode==="result"){
-      if(ANS[n]==null) cls = answers[n] ? "answered" : "empty";
-      else cls = !answers[n] ? "empty" : (answers[n]===ANS[n] ? "ok" : "ng");
-    }
-    else { cls = answers[n] ? "answered" : "empty"; if(flags[n]) cls += " flagged"; }
-    h += '<button class="'+cls+'" data-jumpq="'+n+'"><b>'+n+'</b>'+(answers[n]?MARKS[answers[n]]:"―")+(flags[n]?" ◆":"")+'</button>';
-  }
-  return h + "</div>";
-}
-function bindGrid(){
-  panel.querySelectorAll("[data-jumpq]").forEach(function(b){
-    b.addEventListener("click", function(){
-      var n = b.getAttribute("data-jumpq");
-      closeOverlay();
-      var el = document.getElementById("q"+n);
-      if(el) el.scrollIntoView({behavior:"smooth", block:"start"});
-    });
-  });
-}
-document.getElementById("btnSheet").addEventListener("click", function(){
-  panel.innerHTML = "<h2>解答一覧</h2><p style='font-size:13px;color:#6d6a61'>番号をクリックするとその問題へ移動します。◆ は見直しフラグです。</p>"
-    + gridHTML(graded ? "result" : "edit")
-    + '<div class="row"><button class="btn" id="ovClose">閉じる</button></div>';
-  overlay.classList.add("open");
-  bindGrid();
-  document.getElementById("ovClose").addEventListener("click", closeOverlay);
-});
-
-/* ---------- grading ---------- */
-function doGrade(){
-  graded = true;
-  document.body.classList.add("done");
-  paused = true; document.getElementById("btnPause").textContent = "一時停止";
-  var total = 0, max = 0;
-  for(var n=1;n<=TOTAL;n++){
-    if(ANS[n]==null) continue;
-    max += PTS[n];
-    if(answers[n]===ANS[n]) total += PTS[n];
-  }
-  for(var n=1;n<=TOTAL;n++){
-    var ul = document.querySelector('.choices[data-q="'+n+'"]');
-    if(ul && ANS[n]!=null){
-      ul.querySelectorAll("button").forEach(function(b){
-        var v = parseInt(b.getAttribute("data-v"),10);
-        if(v===ANS[n]) b.classList.add("correct");
-        else if(answers[n]===v) b.classList.add("wrong");
-      });
-    }
-    var ex = document.querySelector('[data-expl="'+n+'"]');
-    if(!ex) continue;
-    var verdict, cls;
-    if(ANS[n]==null){ verdict = "正解が未設定です"; cls = "un"; }
-    else if(!answers[n]){ verdict = "未解答（正解 " + MARKS[ANS[n]] + "）"; cls = "un"; }
-    else if(answers[n]===ANS[n]){ verdict = "正解（+" + PTS[n] + "点）"; cls = "ok"; }
-    else { verdict = "不正解（正解 " + MARKS[ANS[n]] + "）"; cls = "ng"; }
-    var html = '<div class="verdict '+cls+'">'+verdict+'</div>';
-    if(EXPL[n]) html += '<div><span class="goth" style="font-size:12px">解説</span>　'+EXPL[n]+'</div>';
-    ex.innerHTML = html;
-  }
-  document.getElementById("btnGrade").disabled = true;
-  saveState();
-  if(window.__silentGrade) return;
-  var rows = "";
-  for(var n=1;n<=TOTAL;n++){
-    var mark, pts;
-    if(ANS[n]==null){ mark = "―"; pts = ""; }
-    else if(!answers[n]){ mark = "未解答"; pts = "0 / " + PTS[n] + "点"; }
-    else if(answers[n]===ANS[n]){ mark = "○"; pts = "+" + PTS[n] + "点"; }
-    else { mark = "×"; pts = "0 / " + PTS[n] + "点"; }
-    rows += '<div class="rowline" data-jumpq="'+n+'"><span>問'+n+'　'+mark+'</span><span>'+pts+'</span></div>';
-  }
-  panel.innerHTML = "<h2>採点結果</h2>"
-    + '<div class="big">'+total+' <small>/ '+max+' 点</small></div>'
-    + gridHTML("result")
-    + '<div class="breakdown">'+rows+'</div>'
-    + '<p style="font-size:13px;color:#6d6a61">各問題の下に正誤が表示されています。番号をタップすると問題へ移動します。</p>'
-    + '<div class="row"><button class="btn solid" id="ovReview">問題を確認する</button><button class="btn" id="ovClose2">閉じる</button></div>';
-  overlay.classList.add("open");
-  bindGrid();
-  document.getElementById("ovClose2").addEventListener("click", closeOverlay);
-  document.getElementById("ovReview").addEventListener("click", function(){
-    closeOverlay();
-    var el = document.getElementById("q1");
-    if(el) el.scrollIntoView({behavior:"smooth"});
-  });
-  toast("採点が完了しました：" + total + " 点");
-}
-document.getElementById("btnGrade").addEventListener("click", function(){
-  if(graded) return;
-  var un = [];
-  for(var n=1;n<=TOTAL;n++) if(!answers[n]) un.push(n);
-  if(un.length){
-    panel.innerHTML = "<h2>未解答の問題があります</h2>"
-      + '<p class="warnlist">次の ' + un.length + ' 問が未解答です：<br>' + un.join("、") + '</p>'
-      + '<div class="row"><button class="btn" id="ovBack">解答に戻る</button><button class="btn solid" id="ovForce">このまま採点する</button></div>';
-    overlay.classList.add("open");
-    document.getElementById("ovBack").addEventListener("click", closeOverlay);
-    document.getElementById("ovForce").addEventListener("click", function(){ closeOverlay(); doGrade(); });
-  } else doGrade();
-});
-
-/* ---------- bar show / hide ---------- */
-document.getElementById("btnHideBar").addEventListener("click", function(){ document.body.classList.add("bar-hidden"); });
-document.getElementById("barToggle").addEventListener("click", function(){ document.body.classList.remove("bar-hidden"); });
-/* バーの出し入れは手動のみ（「隠す」ボタン / 「メニュー」ピル）。スクロールでは動かさない。 */
-
-/* ---------- reset ---------- */
-document.getElementById("btnReset").addEventListener("click", function(){
-  answers = {}; flags = {}; graded = false;
-  document.body.classList.remove("done");
-  document.querySelectorAll(".choices button").forEach(function(b){ b.classList.remove("sel","correct","wrong"); });
-  document.querySelectorAll(".flagbtn").forEach(function(b){ b.classList.remove("on"); b.textContent = "見直し"; });
-  document.querySelectorAll(".expl").forEach(function(e){ e.innerHTML = ""; });
-  document.getElementById("btnGrade").disabled = false;
-  elapsed = 0; paused = false;
-  document.getElementById("btnPause").textContent = "一時停止";
-  try{ localStorage.removeItem(SKEY); }catch(err){}
-  drawTimer(); updateProg();
-  window.scrollTo({top:0, behavior:"smooth"});
-  toast("リセットしました");
-});
-
-/* ---------- export answers as text ---------- */
-function buildExportText(){
-  var lines = [];
-  lines.push(TITLE);
-  var head2 = "";
-  if(graded){
-    var total = 0, max = 0;
-    for(var n=1;n<=TOTAL;n++){
-      if(ANS[n]==null) continue;
-      max += PTS[n];
-      if(answers[n]===ANS[n]) total += PTS[n];
-    }
-    head2 = "得点 " + total + " / " + max + "点";
-  } else {
-    head2 = "未採点";
-  }
-  head2 += "　回答済み " + answeredCount() + " / " + TOTAL + "問　経過時間 " + fmt(elapsed);
-  lines.push(head2);
-  var wrong = [], unans = [];
-  for(var n=1;n<=TOTAL;n++){
-    var mine = answers[n] ? String(answers[n]) : "未回答";
-    if(!answers[n]) unans.push(n);
-    if(graded && ANS[n]!=null){
-      var mark = !answers[n] ? "-" : (answers[n]===ANS[n] ? "○" : "×");
-      if(answers[n] && answers[n]!==ANS[n]) wrong.push(n);
-      lines.push("問" + n + ": 自分の解答 " + mine + " / 正解 " + ANS[n] + " / " + mark + " / " + PTS[n] + "点");
-    } else {
-      lines.push("問" + n + ": 自分の解答 " + mine);
-    }
-  }
-  if(graded) lines.push("間違えた問題: " + (wrong.length ? wrong.join(", ") : "なし"));
-  lines.push("未回答: " + (unans.length ? unans.join(", ") : "なし"));
-  return lines.join("\n");
-}
-function copyText(text){
-  if(navigator.clipboard && navigator.clipboard.writeText){
-    navigator.clipboard.writeText(text).then(function(){ toast("解答をコピーしました"); }, function(){ toast("コピーできませんでした"); });
-  } else {
-    var ta = document.createElement("textarea");
-    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.select();
-    try{ document.execCommand("copy"); toast("解答をコピーしました"); }
-    catch(e){ toast("コピーできませんでした"); }
-    ta.remove();
-  }
-}
-document.getElementById("btnExport").addEventListener("click", function(){
-  var text = buildExportText();
-  if(navigator.share){
-    navigator.share({text: text}).catch(function(err){
-      if(err && err.name !== "AbortError") copyText(text);
-    });
-  } else copyText(text);
-});
-
-/* ---------- nav / toast ---------- */
-document.querySelectorAll("[data-jump]").forEach(function(b){
-  b.addEventListener("click", function(){
-    var el = document.getElementById(b.getAttribute("data-jump"));
-    if(el) el.scrollIntoView({behavior:"smooth", block:"start"});
-  });
-});
-var toastTimer = null;
-function toast(msg){
-  var t = document.getElementById("toast");
-  t.textContent = msg; t.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 2400);
-}
-drawTimer(); updateProg(); loadState(); drawTimer(); updateProg(); startTimer();
-</script>
-
 <script src="convert.js"></script>
 <script>
 "use strict";
 /* ================================================================
-   共テ (Kyotei web) — 模試PDF → 解ける版HTML 変換アプリ
-   変換ロジックは convert.js (KyoteiConvert) に集約。このスクリプトは
-   UI とブラウザ固有のオーケストレーション（pdf.js 描画 / worker 管理）
-   だけを持つ。
+   共テ (Kyotei web) v11 — マークシート方式
+   問題PDFは「元のページ画像」として表示し、解答は本物の共テ解答用紙と
+   同じ「全行9択の楕円マークシート」で行う。OCR・文字の組み直しはしない。
+   convert.js は解答PDFの正解・配点パース専用。
    ================================================================ */
 
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -568,6 +237,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 var KC = window.KyoteiConvert;
 var RENDER_SCALE = 200 / 72; /* ≒200dpi */
+var JPEG_QUALITY = 0.85;
+var DEFAULT_ROWS = 40; /* 解答PDFがなく正解数が分からない場合のマーク行数 */
 
 /* ---------------- small helpers ---------------- */
 function $(id){ return document.getElementById(id); }
@@ -588,6 +259,10 @@ function setProgress(stage, pageText){
   $("progPage").textContent = pageText || "";
 }
 function hideProgress(){ $("progressOverlay").hidden = true; }
+function fmtTime(s){
+  var m = Math.floor(s / 60), ss = s % 60;
+  return (m < 10 ? "0" : "") + m + ":" + (ss < 10 ? "0" : "") + ss;
+}
 
 /* ---------------- IndexedDB ---------------- */
 function idbOpen(){
@@ -632,7 +307,9 @@ async function idbDelete(id){
 }
 
 /* ================================================================
-   ページ描画 / OCR worker
+   ページ描画（MuPDF 優先、ページ単位で pdf.js フォールバック）
+   pdf.js は埋め込みサブセットフォント (Type1C, ToUnicode なし) の
+   一部ページで本文を描画できないため、主描画は MuPDF.js を使う。
    ================================================================ */
 async function renderPageToCanvas(page){
   var viewport = page.getViewport({ scale: RENDER_SCALE });
@@ -646,13 +323,6 @@ async function renderPageToCanvas(page){
   return canvas;
 }
 
-/* ================================================================
-   MuPDF.js レンダラ
-   pdf.js は埋め込みサブセットフォント (Type1C, ToUnicode なし) の
-   一部ページで本文を描画できない。MuPDF は正しく描けるため、OCR 用の
-   ページ描画は MuPDF.js を使う。読み込みに失敗したら pdf.js 描画に
-   フォールバックする (ハードフェイルしない)。
-   ================================================================ */
 var MUPDF_MODULE_URL = "https://cdn.jsdelivr.net/npm/mupdf@1.28.6/dist/mupdf.js";
 var mupdfMod = null;
 var mupdfModulePromise = null;
@@ -663,17 +333,14 @@ function loadMuPDF(){
       mupdfMod = mod;
       return mod;
     });
-    /* 失敗したら次回再試行できるようにキャッシュを捨てる */
     mupdfModulePromise.catch(function(){ mupdfModulePromise = null; });
   }
   return mupdfModulePromise;
 }
-/* ArrayBuffer → MuPDF Document。失敗時は throw (呼び出し側で fallback) */
 async function openMuPDFDoc(buf){
   var mupdf = await loadMuPDF();
   return mupdf.Document.openDocument(new Uint8Array(buf.slice(0)), "application/pdf");
 }
-/* MuPDF でページを 200dpi 相当に描画して canvas を返す (同期処理) */
 function renderMuPDFPageToCanvas(muDoc, pageIndex){
   var page = muDoc.loadPage(pageIndex);
   try{
@@ -705,216 +372,118 @@ function renderMuPDFPageToCanvas(muDoc, pageIndex){
   } finally { page.destroy(); }
 }
 
-var tessWorker = null;
-async function ensureWorker(){
-  if(!tessWorker) tessWorker = await Tesseract.createWorker("jpn", 1, {
-    langPath: "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main",
-    gzip: false,
-    cacheMethod: "none"
+function canvasToBlob(canvas){
+  return new Promise(function(res, rej){
+    if(canvas.toBlob){
+      canvas.toBlob(function(b){ b ? res(b) : rej(new Error("画像の生成に失敗しました")); },
+        "image/jpeg", JPEG_QUALITY);
+    } else {
+      /* toBlob がない環境向けフォールバック */
+      var url = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
+      var bin = atob(url.split(",")[1]);
+      var arr = new Uint8Array(bin.length);
+      for(var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      res(new Blob([arr], { type: "image/jpeg" }));
+    }
   });
-  return tessWorker;
-}
-async function terminateWorker(){
-  if(tessWorker){
-    try{ await tessWorker.terminate(); }catch(e){}
-    tessWorker = null;
-  }
 }
 
-/* 解答PDF → OCRテキスト（テキスト層が乏しく幾何パースも効かない場合の保険）
-   描画は MuPDF 優先、使えなければ pdf.js にフォールバック */
-async function answerPDFOCRText(buf, worker, onPage){
+/* 問題PDFの全ページを JPEG Blob 化する */
+async function renderAllPages(qBuf, onPage){
   var muDoc = null;
-  try { muDoc = await openMuPDFDoc(buf); } catch(e){ muDoc = null; }
-  if(muDoc){
-    try{
-      var parts = [];
-      var n = muDoc.countPages();
-      for(var p = 1; p <= n; p++){
-        if(onPage) onPage(p, n);
-        var canvas = renderMuPDFPageToCanvas(muDoc, p - 1);
-        var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
-        parts.push(ocr.lines.map(function(l){ return l.text; }).join(" "));
-        canvas.width = 0; canvas.height = 0;
-        await yieldUI();
-      }
-      return parts.join(" ");
-    } catch(e){
-      /* 途中で失敗したら pdf.js 描画でやり直す */
-    } finally {
-      try { muDoc.destroy(); } catch(e){}
-    }
-  }
-  var doc = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
-  var parts2 = [];
+  try { muDoc = await openMuPDFDoc(qBuf); } catch(e){ muDoc = null; }
+  var pdfDoc = null;
+  var engine = muDoc ? "MuPDF" : "pdf.js";
   try{
-    for(var p2 = 1; p2 <= doc.numPages; p2++){
-      if(onPage) onPage(p2, doc.numPages);
-      var page = await doc.getPage(p2);
-      var canvas2 = await renderPageToCanvas(page);
-      var ocr2 = await KC.ocrImage(worker, canvas2, canvas2.width, canvas2.height);
-      parts2.push(ocr2.lines.map(function(l){ return l.text; }).join(" "));
-      canvas2.width = 0; canvas2.height = 0;
+    var n;
+    if(muDoc) n = muDoc.countPages();
+    else {
+      pdfDoc = await pdfjsLib.getDocument({ data: qBuf.slice(0) }).promise;
+      n = pdfDoc.numPages;
+    }
+    var blobs = [];
+    for(var p = 0; p < n; p++){
+      if(onPage) onPage(p + 1, n);
+      var canvas = null;
+      if(muDoc){
+        try { canvas = renderMuPDFPageToCanvas(muDoc, p); }
+        catch(e){ canvas = null; }
+      }
+      if(!canvas){
+        if(!pdfDoc) pdfDoc = await pdfjsLib.getDocument({ data: qBuf.slice(0) }).promise;
+        var page = await pdfDoc.getPage(p + 1);
+        canvas = await renderPageToCanvas(page);
+        if(muDoc) engine = "MuPDF/pdf.js";
+      }
+      blobs.push(await canvasToBlob(canvas));
+      canvas.width = 0; canvas.height = 0;
       await yieldUI();
     }
-  } finally { doc.destroy(); }
-  return parts2.join(" ");
+    return { blobs: blobs, pageCount: n, renderEngine: engine };
+  } finally {
+    if(muDoc){ try { muDoc.destroy(); } catch(e){} }
+    if(pdfDoc){ try { pdfDoc.destroy(); } catch(e){} }
+  }
 }
 
-/* 解答PDF → {key, points, count, method}（幾何パース優先） */
+/* 解答PDF → {key, points, count, method}（幾何パース。OCRは使わない） */
 async function parseAnswerBuf(buf){
   var pages = await KC.extractPdfPages(pdfjsLib, buf.slice(0));
-  var joined = KC.answerJoinedText(pages);
-  if(joined.replace(/\s/g, "").length >= 100){
-    return KC.parseAnswerKeyFromPages(pages);
+  return KC.parseAnswerKeyFromPages(pages);
+}
+
+/* ================================================================
+   変換： 解答キー抽出 + 全ページ画像化（数秒で終わる）
+   ================================================================ */
+async function convertExam(opts){
+  var answerKey = {}, points = {};
+  if(opts.aBuf){
+    setProgress("解答PDFを解析中…", "");
+    var parsed = await parseAnswerBuf(opts.aBuf);
+    answerKey = parsed.key; points = parsed.points;
   }
-  var worker = await ensureWorker();
-  var ocrText = await answerPDFOCRText(buf, worker, function(p, total){
-    setProgress("解答PDFを読み取り中…", "ページ " + p + " / " + total);
+  var r = await renderAllPages(opts.qBuf, function(p, total){
+    setProgress("ページを描画中…", "ページ " + p + " / " + total);
   });
-  var scanned = KC.scanAnswerTokens(KC.tokenize(ocrText));
+  var keyCount = Object.keys(answerKey).length;
   return {
-    key: scanned.key, points: scanned.points,
-    count: Object.keys(scanned.key).length, method: "ocr-scan"
+    pageImages: r.blobs, pageCount: r.pageCount, renderEngine: r.renderEngine,
+    answerKey: answerKey, points: points,
+    questionCount: keyCount > 0 ? keyCount : DEFAULT_ROWS
   };
 }
 
-/* ================================================================
-   変換オーケストレーション
-   ================================================================ */
-async function convertExam(opts){
-  var title = opts.title, storageKey = opts.storageKey;
-  var answerKey = {}, points = {};
+/* 旧レコード（v10以前: generatedHTML のみ）用にページ画像だけを作り直す */
+async function ensurePageImages(exam){
+  if(exam.pageImages && exam.pageImages.length) return true;
+  if(!exam.questionPDF){
+    toast("元の問題PDFがないため表示できません");
+    return false;
+  }
   try{
-    /* ---- 解答キー ---- */
-    if(opts.keyOverride){
-      answerKey = opts.keyOverride.key || {};
-      points = opts.keyOverride.points || {};
-    } else if(opts.aBuf){
-      setProgress("解答PDFを解析中…", "");
-      var parsed = await parseAnswerBuf(opts.aBuf);
-      answerKey = parsed.key; points = parsed.points;
-    }
-
-    /* ---- 問題PDF ---- */
-    var doc = await pdfjsLib.getDocument({ data: opts.qBuf.slice(0) }).promise;
-    var pageCount = doc.numPages;
-    var figureCount = 0, lineCount = 0;
-    var allEvents = [];
-    var muDoc = null; /* OCR パス用 MuPDF 文書 (開けなければ null = pdf.js 描画) */
-    try{
-      /* テキスト層チェック（文書全体で1回） */
-      setProgress("テキストを確認中…", "");
-      var pageTC = [];
-      var totalChars = 0, jpChars = 0;
-      for(var p0 = 1; p0 <= pageCount; p0++){
-        var pg0 = await doc.getPage(p0);
-        var vp0 = pg0.getViewport({ scale: 1 });
-        var tc0 = await pg0.getTextContent();
-        var plain = tc0.items.map(function(it){ return it.str; }).join("");
-        var stripped = plain.replace(/\s/g, "");
-        totalChars += stripped.length;
-        jpChars += KC.countJapanese(stripped);
-        pageTC.push({ tc: tc0, w: vp0.width, h: vp0.height });
-      }
-      var useTextLayer = totalChars >= 800 && totalChars > 0 && (jpChars / totalChars) >= 0.5;
-
-      /* OCR パスでは描画を MuPDF に任せる (pdf.js は一部ページで本文が欠ける)。
-         MuPDF が読み込めない環境では従来どおり pdf.js 描画にフォールバック。 */
-      if(!useTextLayer){
-        setProgress("描画エンジンを準備中…", "");
-        try { muDoc = await openMuPDFDoc(opts.qBuf); } catch(e){ muDoc = null; }
-      }
-      var renderEngine = useTextLayer ? "テキスト層" : (muDoc ? "MuPDF" : "pdf.js");
-
-      for(var p = 1; p <= pageCount; p++){
-        var pageLabel = "ページ " + p + " / " + pageCount;
-        if(useTextLayer){
-          setProgress("組み立て中…", pageLabel);
-          var conv = KC.linesFromTextContent(pageTC[p-1].tc, pageTC[p-1].w, pageTC[p-1].h);
-          lineCount += conv.lines.length;
-          var orderedTL = KC.readingOrder(conv.lines);
-          orderedTL.forEach(function(line){
-            line.page = p - 1;
-            if(!KC.isNoiseLine(line)) allEvents.push({ kind: "line", y: line.y, line: line });
-          });
-        } else {
-          setProgress("ページを描画中…", pageLabel);
-          var canvas = null;
-          if(muDoc){
-            try { canvas = renderMuPDFPageToCanvas(muDoc, p - 1); }
-            catch(e){ canvas = null; }
-          }
-          if(!canvas){
-            var page = await doc.getPage(p);
-            canvas = await renderPageToCanvas(page);
-          }
-          setProgress("文字を読み取り中…", pageLabel);
-          var worker = await ensureWorker();
-          var ocr = await KC.ocrImage(worker, canvas, canvas.width, canvas.height);
-          lineCount += ocr.lines.length;
-          var ordered = KC.readingOrder(ocr.lines);
-          var lineEvents = [];
-          ordered.forEach(function(line){
-            line.page = p - 1;
-            if(!KC.isNoiseLine(line)) lineEvents.push({ kind: "line", y: line.y, line: line });
-          });
-          setProgress("図を検出中…", pageLabel);
-          await yieldUI();
-          var ctx2 = canvas.getContext("2d", { willReadFrequently: true });
-          var imgData = ctx2.getImageData(0, 0, canvas.width, canvas.height);
-          var gray = KC.grayFromRGBA(imgData.data, canvas.width, canvas.height);
-          var bands = KC.detectFigureBands(gray, canvas.width, canvas.height, ocr.words);
-          /* 罫線表のバンドは画像にせず、内部の行に tableId を付けて選択肢化する */
-          var classified = KC.classifyBands(bands, ordered);
-          var figEvents = [];
-          classified.forEach(function(cb, ci){
-            if(cb.kind === "table"){
-              ordered.forEach(function(line){
-                var cx = line.x + line.width / 2, cy = line.y + line.height / 2;
-                if(cx >= cb.band.xMin && cx <= cb.band.xMax && cy >= cb.band.yMin && cy <= cb.band.yMax){
-                  line.tableId = (p - 1) + ":" + ci;
-                }
-              });
-              return;
-            }
-            var url = KC.cropBandToDataURL(canvas, cb.band);
-            if(url){
-              figureCount++;
-              figEvents.push({ kind: "figure", y: cb.band.yMin, page: p - 1, src: url });
-            }
-          });
-          KC.mergePageEvents(lineEvents, figEvents).forEach(function(ev){ allEvents.push(ev); });
-          canvas.width = 0; canvas.height = 0;
-        }
-        await yieldUI();
-      }
-    } finally {
-      doc.destroy();
-      if(muDoc){ try { muDoc.destroy(); } catch(e){} }
-    }
-
-    setProgress("組み立て中…", "");
-    var built = KC.buildElements(allEvents, Object.keys(answerKey).length);
-    var templates = { css: $("gen-css").textContent, js: $("gen-js").textContent };
-    var html = KC.buildHTML(title, built.elements, answerKey, points, storageKey, templates);
-    return {
-      generatedHTML: html, answerKey: answerKey, points: points,
-      questionCount: built.questions, pageCount: pageCount,
-      lineCount: lineCount, figureCount: figureCount, renderEngine: renderEngine
-    };
-  } finally {
-    await terminateWorker();
+    setProgress("ページを描画中…", "");
+    var r = await renderAllPages(exam.questionPDF, function(p, total){
+      setProgress("ページを描画中…", "ページ " + p + " / " + total);
+    });
+    exam.pageImages = r.blobs;
+    exam.pageCount = r.pageCount;
+    exam.renderEngine = r.renderEngine;
+    delete exam.generatedHTML; /* 旧方式の生成HTMLはもう使わない */
+    await idbPut(exam);
+    hideProgress();
+    return true;
+  }catch(err){
+    hideProgress();
+    toast("ページの描画に失敗しました");
+    return false;
   }
 }
 
 /* ================================================================
-   UI
+   ライブラリ
    ================================================================ */
-var editingExamId = null;
-
 function showView(name){
-  ["view-library", "view-import", "view-keyedit"].forEach(function(id){
+  ["view-library", "view-import"].forEach(function(id){
     $(id).hidden = id !== ("view-" + name);
   });
 }
@@ -941,8 +510,8 @@ async function renderLibrary(){
     card.innerHTML =
       '<p class="etitle">' + esc(exam.title) + "</p>"
       + '<p class="emeta">' + fmtDate(exam.createdAt) + "　全" + exam.questionCount + "問"
-      + (keyCount ? "　正解 " + keyCount + "問分" : "　正解 未設定") + "</p>"
-      + '<p class="ediag">' + exam.pageCount + "ページ／行 " + exam.lineCount + "／図 " + exam.figureCount + (exam.renderEngine ? "／描画 " + exam.renderEngine : "") + "</p>"
+      + (keyCount ? "　正解 " + keyCount + "問分" : "　正解 未設定")
+      + "　" + exam.pageCount + "ページ</p>"
       + '<div class="erow">'
       + '<button class="btn solid small" data-action="solve">解く</button>'
       + '<button class="btn small" data-action="regen">再生成</button>'
@@ -959,31 +528,36 @@ async function renderLibrary(){
 
 async function onExamAction(action, exam, btnEl){
   if(action === "solve"){
-    $("solveTitle").textContent = exam.title;
-    $("appbar").hidden = true;
-    $("mainArea").hidden = true;
-    $("view-solve").hidden = false;
-    $("solveFrame").srcdoc = exam.generatedHTML;
-  } else if(action === "key"){
-    openKeyEdit(exam);
+    if(await ensurePageImages(exam)) openSolve(exam);
   } else if(action === "del"){
     var delBtn = btnEl || null;
     if(!delBtn || delBtn.dataset.armed !== "1"){
-      if(delBtn){ delBtn.dataset.armed = "1"; delBtn.textContent = "本当に削除"; setTimeout(function(){ if(delBtn.isConnected){ delBtn.dataset.armed = ""; delBtn.textContent = "削除"; } }, 8000); }
+      if(delBtn){
+        delBtn.dataset.armed = "1"; delBtn.textContent = "本当に削除";
+        setTimeout(function(){
+          if(delBtn.isConnected){ delBtn.dataset.armed = ""; delBtn.textContent = "削除"; }
+        }, 8000);
+      }
       return;
     }
     await idbDelete(exam.id);
+    try{ localStorage.removeItem("kyotei-marks-" + exam.id); }catch(e){}
     try{ localStorage.removeItem("kyotei-progress-" + exam.id); }catch(e){}
     await renderLibrary();
     toast("削除しました");
   } else if(action === "regen"){
     try{
-      setProgress("再生成中…", "");
-      var r = await convertExam({
-        title: exam.title, qBuf: exam.questionPDF, aBuf: exam.answerPDF || null,
-        keyOverride: null, storageKey: "kyotei-progress-" + exam.id
-      });
-      Object.assign(exam, r);
+      var r = await convertExam({ qBuf: exam.questionPDF, aBuf: exam.answerPDF || null });
+      exam.pageImages = r.pageImages;
+      exam.pageCount = r.pageCount;
+      exam.renderEngine = r.renderEngine;
+      exam.answerKey = r.answerKey;
+      exam.points = r.points;
+      exam.questionCount = r.questionCount;
+      delete exam.generatedHTML;
+      delete exam.lineCount;
+      delete exam.figureCount;
+      setProgress("保存中…", "");
       await idbPut(exam);
       hideProgress();
       await renderLibrary();
@@ -995,73 +569,318 @@ async function onExamAction(action, exam, btnEl){
   }
 }
 
-$("solveBack").addEventListener("click", function(){
-  $("solveFrame").srcdoc = "";
+/* ================================================================
+   解く画面： ページ画像 + タイマー + ズーム
+   バーの出し入れは手動のみ（隠すボタン / メニューピル）。
+   スクロール連動の自動開閉はしない。
+   ================================================================ */
+var solveExam = null;
+var solveMarks = {};       /* {解答番号: 選んだ数字} */
+var solveElapsed = 0;
+var solveTimerId = null;
+var solveZoomIdx = 0;
+var solveObjectURLs = [];
+var sheetGraded = false;
+var ZOOMS = [100, 150, 200];
+
+function marksKey(examId){ return "kyotei-marks-" + examId; }
+function saveSolveState(){
+  if(!solveExam) return;
+  try{
+    localStorage.setItem(marksKey(solveExam.id),
+      JSON.stringify({ m: solveMarks, e: solveElapsed }));
+  }catch(e){}
+}
+function loadSolveState(examId){
+  var s = null;
+  try{ s = JSON.parse(localStorage.getItem(marksKey(examId)) || "null"); }catch(e){}
+  solveMarks = (s && s.m) || {};
+  solveElapsed = (s && s.e) || 0;
+}
+function drawSolveTimer(){ $("solveTimer").textContent = fmtTime(solveElapsed); }
+function startSolveTimer(){
+  stopSolveTimer();
+  solveTimerId = setInterval(function(){
+    solveElapsed++;
+    drawSolveTimer();
+    if(solveElapsed % 5 === 0) saveSolveState();
+  }, 1000);
+}
+function stopSolveTimer(){
+  if(solveTimerId){ clearInterval(solveTimerId); solveTimerId = null; }
+}
+
+function openSolve(exam){
+  solveExam = exam;
+  loadSolveState(exam.id);
+  sheetGraded = false;
+  solveZoomIdx = 0;
+  $("btnZoom").textContent = "ズーム 100%";
+  $("pagesInner").style.width = "100%";
+  $("solveTitle").textContent = exam.title;
+  drawSolveTimer();
+  /* ページ画像を並べる（ページ自体には何も重ねない） */
+  var inner = $("pagesInner");
+  inner.innerHTML = "";
+  solveObjectURLs.forEach(function(u){ URL.revokeObjectURL(u); });
+  solveObjectURLs = [];
+  (exam.pageImages || []).forEach(function(blob){
+    var url = URL.createObjectURL(blob);
+    solveObjectURLs.push(url);
+    var img = document.createElement("img");
+    img.src = url;
+    img.alt = "";
+    inner.appendChild(img);
+  });
+  $("pagesScroll").scrollTop = 0;
+  showSolveBar(true);
+  $("sheetOverlay").hidden = true;
+  $("appbar").hidden = true;
+  $("mainArea").hidden = true;
+  $("view-solve").hidden = false;
+  startSolveTimer();
+}
+function closeSolve(){
+  stopSolveTimer();
+  saveSolveState();
+  solveObjectURLs.forEach(function(u){ URL.revokeObjectURL(u); });
+  solveObjectURLs = [];
+  $("pagesInner").innerHTML = "";
+  $("sheetOverlay").hidden = true;
   $("view-solve").hidden = true;
   $("appbar").hidden = false;
   $("mainArea").hidden = false;
+  solveExam = null;
   showView("library");
-});
-
-/* ---- 正解・配点の編集 ---- */
-function openKeyEdit(exam){
-  editingExamId = exam.id;
-  $("keyEditTitle").textContent = exam.title + "（全" + exam.questionCount + "問）";
-  var rows = $("keyRows");
-  rows.innerHTML = "";
-  for(var n = 1; n <= exam.questionCount; n++){
-    var row = document.createElement("div");
-    row.className = "keyrow";
-    var sel = '<select data-kno="' + n + '"><option value="">未設定</option>';
-    for(var v = 1; v <= 9; v++){
-      sel += '<option value="' + v + '"' + (exam.answerKey && exam.answerKey[n] === v ? " selected" : "") + ">" + v + "</option>";
-    }
-    sel += "</select>";
-    var pts = exam.points && exam.points[n] != null ? exam.points[n] : 1;
-    row.innerHTML = '<span class="kno">問' + n + "</span><label>正解</label>" + sel
-      + '<label>配点</label><input type="number" data-pno="' + n + '" min="0" max="100" value="' + pts + '">';
-    rows.appendChild(row);
-  }
-  showView("keyedit");
 }
-$("keyCancel").addEventListener("click", function(){ showView("library"); });
-$("keySave").addEventListener("click", async function(){
-  var exams = await idbAll();
-  var exam = exams.filter(function(e){ return e.id === editingExamId; })[0];
-  if(!exam){ showView("library"); return; }
-  var key = {}, points = {};
-  $("keyRows").querySelectorAll("select[data-kno]").forEach(function(sel){
-    var n = parseInt(sel.getAttribute("data-kno"), 10);
-    if(sel.value) key[n] = parseInt(sel.value, 10);
-  });
-  $("keyRows").querySelectorAll("input[data-pno]").forEach(function(inp){
-    var n = parseInt(inp.getAttribute("data-pno"), 10);
-    var v = parseInt(inp.value, 10);
-    points[n] = isNaN(v) || v < 0 ? 1 : v;
-  });
-  exam.answerKey = key;
-  exam.points = points;
-  try{
-    setProgress("再生成中…", "");
-    var r = await convertExam({
-      title: exam.title, qBuf: exam.questionPDF, aBuf: exam.answerPDF || null,
-      keyOverride: { key: key, points: points },
-      storageKey: "kyotei-progress-" + exam.id
-    });
-    Object.assign(exam, r);
-    exam.answerKey = key; exam.points = points;
-    await idbPut(exam);
-    hideProgress();
-    await renderLibrary();
-    showView("library");
-    toast("正解・配点を保存しました");
-  }catch(err){
-    hideProgress();
-    toast("再生成に失敗しました");
-  }
+$("solveBack").addEventListener("click", closeSolve);
+
+/* バーの手動開閉 */
+function showSolveBar(show){
+  $("solveBar").hidden = !show;
+  $("solveMenuPill").hidden = show;
+}
+$("btnHideBar").addEventListener("click", function(){ showSolveBar(false); });
+$("solveMenuPill").addEventListener("click", function(){ showSolveBar(true); });
+
+/* ズーム: 100% → 150% → 200% → 100%（横スクロールは #pagesScroll が担う） */
+$("btnZoom").addEventListener("click", function(){
+  solveZoomIdx = (solveZoomIdx + 1) % ZOOMS.length;
+  var z = ZOOMS[solveZoomIdx];
+  $("pagesInner").style.width = z + "%";
+  $("btnZoom").textContent = "ズーム " + z + "%";
 });
 
-/* ---- 取り込み ---- */
+/* ================================================================
+   マークシート（共テ本物の形式： 全行 1〜9 の楕円、ブロック分割）
+   ================================================================ */
+function blockSizes(n){
+  if(n <= 0) return [];
+  var blocks = Math.max(1, Math.ceil(n / 11));
+  var base = Math.floor(n / blocks), rem = n % blocks;
+  var sizes = [];
+  for(var i = 0; i < blocks; i++) sizes.push(base + (i < rem ? 1 : 0));
+  return sizes;
+}
+function hasKey(){
+  return solveExam && Object.keys(solveExam.answerKey || {}).length > 0;
+}
+function pointsOf(n){
+  var p = solveExam && solveExam.points ? solveExam.points[n] : null;
+  return p != null ? p : 1;
+}
+function markedCount(){
+  var c = 0;
+  for(var n = 1; n <= solveExam.questionCount; n++) if(solveMarks[n]) c++;
+  return c;
+}
+
+function buildSheet(){
+  var exam = solveExam;
+  $("sheetTitle").textContent = exam.title;
+  $("scoreBanner").className = "";
+  $("scoreBanner").innerHTML = "";
+  $("sheetGrade").hidden = !hasKey();
+  $("sheetExport").hidden = true;
+  var wrap = $("msBlocks");
+  wrap.innerHTML = "";
+  var start = 1;
+  blockSizes(exam.questionCount).forEach(function(size){
+    var block = document.createElement("div");
+    block.className = "msblock";
+    var head = document.createElement("div");
+    head.className = "msgrid head";
+    var h = '<div class="hc num">番号</div>';
+    for(var d = 1; d <= 9; d++) h += '<div class="hc">' + d + "</div>";
+    h += "<div></div>";
+    head.innerHTML = h;
+    block.appendChild(head);
+    for(var i = 0; i < size; i++){
+      var n = start + i;
+      var row = document.createElement("div");
+      row.className = "msgrid msrow";
+      row.setAttribute("data-row", n);
+      var rh = '<div class="rno">' + n + "</div>";
+      for(var v = 1; v <= 9; v++){
+        rh += '<button class="bubble" data-n="' + n + '" data-v="' + v + '" aria-label="問'
+          + n + " 選択肢" + v + '"><span class="ov">' + v + "</span></button>";
+      }
+      rh += '<div class="res" data-res="' + n + '"></div>';
+      row.innerHTML = rh;
+      block.appendChild(row);
+    }
+    start += size;
+    wrap.appendChild(block);
+  });
+  wrap.querySelectorAll(".bubble").forEach(function(b){
+    b.addEventListener("click", function(){
+      var n = parseInt(b.getAttribute("data-n"), 10);
+      var v = parseInt(b.getAttribute("data-v"), 10);
+      if(solveMarks[n] === v) delete solveMarks[n];
+      else solveMarks[n] = v;
+      if(sheetGraded) clearGrading();
+      paintRow(n);
+      updateUnmarked();
+      saveSolveState();
+    });
+  });
+  for(var q = 1; q <= exam.questionCount; q++) paintRow(q);
+  updateUnmarked();
+}
+function paintRow(n){
+  document.querySelectorAll('.bubble[data-n="' + n + '"]').forEach(function(b){
+    var v = parseInt(b.getAttribute("data-v"), 10);
+    b.classList.toggle("filled", solveMarks[n] === v);
+  });
+}
+function updateUnmarked(){
+  var un = solveExam.questionCount - markedCount();
+  $("unmarkedLine").textContent = un > 0
+    ? "未マーク " + un + "問（全" + solveExam.questionCount + "問）"
+    : "全" + solveExam.questionCount + "問 マーク済み";
+}
+function clearGrading(){
+  sheetGraded = false;
+  $("scoreBanner").className = "";
+  $("scoreBanner").innerHTML = "";
+  $("sheetExport").hidden = true;
+  document.querySelectorAll("[data-res]").forEach(function(el){ el.textContent = ""; el.className = "res"; });
+  document.querySelectorAll(".bubble.correct-hint").forEach(function(b){ b.classList.remove("correct-hint"); });
+}
+
+function openSheet(){
+  if(!solveExam) return;
+  sheetGraded = false;
+  buildSheet();
+  $("sheetOverlay").hidden = false;
+  $("sheetOverlay").scrollTop = 0;
+}
+function closeSheet(){
+  $("sheetOverlay").hidden = true;
+  saveSolveState();
+}
+$("btnSheet").addEventListener("click", openSheet);
+$("sheetClose").addEventListener("click", closeSheet);
+
+/* ---------- 採点 ---------- */
+function gradeSheet(){
+  if(!solveExam || !hasKey()) return;
+  var key = solveExam.answerKey;
+  var total = 0, max = 0;
+  for(var n = 1; n <= solveExam.questionCount; n++){
+    if(key[n] == null) continue;
+    max += pointsOf(n);
+    if(solveMarks[n] === key[n]) total += pointsOf(n);
+  }
+  for(var q = 1; q <= solveExam.questionCount; q++){
+    var res = document.querySelector('[data-res="' + q + '"]');
+    if(!res) continue;
+    res.className = "res";
+    res.textContent = "";
+    document.querySelectorAll('.bubble[data-n="' + q + '"]').forEach(function(b){
+      b.classList.remove("correct-hint");
+    });
+    if(key[q] == null) continue;
+    if(!solveMarks[q]){ res.textContent = "－"; res.classList.add("blank"); }
+    else if(solveMarks[q] === key[q]){ res.textContent = "○"; res.classList.add("ok"); }
+    else {
+      res.textContent = "×"; res.classList.add("ng");
+      var correctBtn = document.querySelector(
+        '.bubble[data-n="' + q + '"][data-v="' + key[q] + '"]');
+      if(correctBtn) correctBtn.classList.add("correct-hint");
+    }
+  }
+  sheetGraded = true;
+  var banner = $("scoreBanner");
+  banner.innerHTML = '得点 <span class="big">' + total + '</span> <small>/ ' + max + " 点</small>";
+  banner.className = "show";
+  $("sheetExport").hidden = false;
+  saveSolveState();
+  toast("採点しました：" + total + " / " + max + "点");
+}
+$("sheetGrade").addEventListener("click", gradeSheet);
+
+/* ---------- 解答を出力 ---------- */
+function buildExportText(){
+  var exam = solveExam;
+  var key = exam.answerKey || {};
+  var lines = [exam.title];
+  var head;
+  if(sheetGraded && hasKey()){
+    var total = 0, max = 0;
+    for(var n = 1; n <= exam.questionCount; n++){
+      if(key[n] == null) continue;
+      max += pointsOf(n);
+      if(solveMarks[n] === key[n]) total += pointsOf(n);
+    }
+    head = "得点 " + total + " / " + max + "点";
+  } else head = "未採点";
+  head += "　回答済み " + markedCount() + " / " + exam.questionCount
+    + "問　経過時間 " + fmtTime(solveElapsed);
+  lines.push(head);
+  var wrong = [], unans = [];
+  for(var q = 1; q <= exam.questionCount; q++){
+    var mine = solveMarks[q] ? String(solveMarks[q]) : "未回答";
+    if(!solveMarks[q]) unans.push(q);
+    if(hasKey() && key[q] != null){
+      var mark = !solveMarks[q] ? "-" : (solveMarks[q] === key[q] ? "○" : "×");
+      if(solveMarks[q] && solveMarks[q] !== key[q]) wrong.push(q);
+      lines.push("問" + q + ": 自分の解答 " + mine + " / 正解 " + key[q]
+        + " / " + mark + " / " + pointsOf(q) + "点");
+    } else {
+      lines.push("問" + q + ": 自分の解答 " + mine);
+    }
+  }
+  if(hasKey()) lines.push("間違えた問題: " + (wrong.length ? wrong.join(", ") : "なし"));
+  lines.push("未回答: " + (unans.length ? unans.join(", ") : "なし"));
+  return lines.join("\n");
+}
+function copyText(text){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(
+      function(){ toast("解答をコピーしました"); },
+      function(){ toast("コピーできませんでした"); });
+  } else {
+    var ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    try{ document.execCommand("copy"); toast("解答をコピーしました"); }
+    catch(e){ toast("コピーできませんでした"); }
+    ta.remove();
+  }
+}
+$("sheetExport").addEventListener("click", function(){
+  var text = buildExportText();
+  if(navigator.share){
+    navigator.share({ text: text }).catch(function(err){
+      if(err && err.name !== "AbortError") copyText(text);
+    });
+  } else copyText(text);
+});
+
+/* ================================================================
+   取り込み
+   ================================================================ */
 var impQFile = null, impAFile = null;
 function resetImport(){
   impQFile = null; impAFile = null;
@@ -1103,28 +922,23 @@ $("impStart").addEventListener("click", async function(){
     setProgress("PDFを読み込んでいます…", "");
     var qBuf = await impQFile.arrayBuffer();
     var aBuf = impAFile ? await impAFile.arrayBuffer() : null;
-    var id = newId();
-    var r = await convertExam({
-      title: title, qBuf: qBuf, aBuf: aBuf,
-      keyOverride: null, storageKey: "kyotei-progress-" + id
-    });
+    var r = await convertExam({ qBuf: qBuf, aBuf: aBuf });
     var exam = {
-      id: id, title: title, createdAt: Date.now(),
-      questionCount: r.questionCount, generatedHTML: r.generatedHTML,
+      id: newId(), title: title, createdAt: Date.now(),
+      questionCount: r.questionCount,
+      pageImages: r.pageImages, pageCount: r.pageCount, renderEngine: r.renderEngine,
       answerKey: r.answerKey, points: r.points,
-      pageCount: r.pageCount, lineCount: r.lineCount, figureCount: r.figureCount,
-      renderEngine: r.renderEngine,
       questionPDF: qBuf, answerPDF: aBuf
     };
+    setProgress("保存中…", "");
     await idbPut(exam);
     hideProgress();
     await renderLibrary();
     showView("library");
-    if(r.questionCount === 0){
-      toast("取り込みましたが、問題を検出できませんでした");
-    } else {
-      toast("取り込みました（全" + r.questionCount + "問）");
-    }
+    var keyCount = Object.keys(r.answerKey).length;
+    toast(keyCount
+      ? "取り込みました（全" + r.questionCount + "問・正解 " + keyCount + "問分）"
+      : "取り込みました（正解は未設定です）");
   }catch(err){
     hideProgress();
     $("impError").textContent = "変換に失敗しました：" + (err && err.message ? err.message : err);
