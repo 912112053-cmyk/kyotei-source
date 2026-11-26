@@ -4,7 +4,7 @@
      実行時にキャッシュし、次回からはキャッシュ優先（オフライン対応） */
 "use strict";
 
-var CACHE_NAME = "kyotei-web-v4";
+var CACHE_NAME = "kyotei-web-v5";
 
 var PRECACHE_URLS = [
   "./",
