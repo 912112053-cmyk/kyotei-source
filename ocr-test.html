@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>OCR isolation test</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
+<script src="convert.js"></script>
+</head>
+<body>
+<h1>OCR isolation test</h1>
+<pre id="out">starting…</pre>
+<script>
+var out = document.getElementById("out");
+function log(s){ out.textContent += "\n" + s; }
+(async function(){
+  try{
+    var img = new Image();
+    img.src = "test-page.png";
+    await img.decode();
+    log("image loaded: " + img.naturalWidth + "x" + img.naturalHeight);
+    var canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+    canvas.getContext("2d").drawImage(img, 0, 0);
+
+    /* Run A: exactly like the app — default createWorker("jpn"), canvas input */
+    var t0 = Date.now();
+    var wA = await Tesseract.createWorker("jpn");
+    var ocrA = await KyoteiConvert.ocrImage(wA, canvas, canvas.width, canvas.height);
+    await wA.terminate();
+    log("A default/canvas: lines=" + ocrA.lines.length + " words=" + ocrA.words.length + " (" + Math.round((Date.now()-t0)/1000) + "s)");
+    log("A first lines: " + ocrA.lines.slice(0,4).map(function(l){ return l.text; }).join(" | "));
+
+    /* Run B: default worker, but image element input */
+    var t1 = Date.now();
+    var wB = await Tesseract.createWorker("jpn");
+    var ocrB = await KyoteiConvert.ocrImage(wB, img, canvas.width, canvas.height);
+    await wB.terminate();
+    log("B default/img: lines=" + ocrB.lines.length + " words=" + ocrB.words.length + " (" + Math.round((Date.now()-t1)/1000) + "s)");
+
+    /* Run C: tessdata_fast via jsdelivr gh, blob URL input */
+    try{
+      var t2 = Date.now();
+      var wC = await Tesseract.createWorker("jpn", 1, {
+        langPath: "https://cdn.jsdelivr.net/gh/tesseract-ocr/tessdata_fast@main",
+        gzip: false, cacheMethod: "none", logger: function(){}
+      });
+      var ocrC = await KyoteiConvert.ocrImage(wC, canvas, canvas.width, canvas.height);
+      await wC.terminate();
+      log("C fast/canvas: lines=" + ocrC.lines.length + " words=" + ocrC.words.length + " (" + Math.round((Date.now()-t2)/1000) + "s)");
+      log("C first lines: " + ocrC.lines.slice(0,4).map(function(l){ return l.text; }).join(" | "));
+    }catch(e){ log("C failed: " + e.message); }
+
+    log("DONE");
+  }catch(e){
+    log("ERROR: " + (e && e.message || e));
+  }
+})();
+</script>
+</body>
+</html>
