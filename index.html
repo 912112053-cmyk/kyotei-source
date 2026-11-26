@@ -841,14 +841,14 @@ async function renderLibrary(){
       + "</div>";
     card.querySelectorAll("button").forEach(function(btn){
       btn.addEventListener("click", function(){
-        onExamAction(btn.getAttribute("data-action"), exam);
+        onExamAction(btn.getAttribute("data-action"), exam, btn);
       });
     });
     list.appendChild(card);
   });
 }
 
-async function onExamAction(action, exam){
+async function onExamAction(action, exam, btnEl){
   if(action === "solve"){
     $("solveTitle").textContent = exam.title;
     $("appbar").hidden = true;
@@ -858,7 +858,11 @@ async function onExamAction(action, exam){
   } else if(action === "key"){
     openKeyEdit(exam);
   } else if(action === "del"){
-    if(!confirm("「" + exam.title + "」を削除しますか？")) return;
+    var delBtn = btnEl || null;
+    if(!delBtn || delBtn.dataset.armed !== "1"){
+      if(delBtn){ delBtn.dataset.armed = "1"; delBtn.textContent = "本当に削除"; setTimeout(function(){ if(delBtn.isConnected){ delBtn.dataset.armed = ""; delBtn.textContent = "削除"; } }, 3000); }
+      return;
+    }
     await idbDelete(exam.id);
     try{ localStorage.removeItem("kyotei-progress-" + exam.id); }catch(e){}
     await renderLibrary();
