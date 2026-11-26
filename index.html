@@ -101,7 +101,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v9（MuPDF描画）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v10（MuPDF描画）</p>
   </section>
 
   <!-- 取り込み -->
@@ -116,7 +116,7 @@
     <div class="fld"><span>解答PDF（任意）</span>
       <label class="filebtn"><input type="file" id="impA" accept="application/pdf" class="visually-hidden"><span>PDFを選ぶ</span><span class="fname" id="impAName"></span></label>
       <button class="btn small" id="impAClear" hidden>解答PDFを外す</button>
-      <p class="muted">解答PDFがない場合は、あとから「正解を編集」で手入力できます。</p>
+      <p class="muted">解答PDFがない場合は、採点なしで解く形になります。</p>
     </div>
     <p class="err" id="impError"></p>
     <div class="row">
@@ -463,13 +463,7 @@ document.getElementById("btnGrade").addEventListener("click", function(){
 /* ---------- bar show / hide ---------- */
 document.getElementById("btnHideBar").addEventListener("click", function(){ document.body.classList.add("bar-hidden"); });
 document.getElementById("barToggle").addEventListener("click", function(){ document.body.classList.remove("bar-hidden"); });
-var lastScrollY = 0;
-window.addEventListener("scroll", function(){
-  var y = window.scrollY || 0;
-  if(y > lastScrollY + 8 && y > 140){ document.body.classList.add("bar-hidden"); }
-  else if(y < lastScrollY - 8){ document.body.classList.remove("bar-hidden"); }
-  lastScrollY = y;
-}, {passive:true});
+/* バーの出し入れは手動のみ（「隠す」ボタン / 「メニュー」ピル）。スクロールでは動かさない。 */
 
 /* ---------- reset ---------- */
 document.getElementById("btnReset").addEventListener("click", function(){
@@ -871,12 +865,23 @@ async function convertExam(opts){
           var imgData = ctx2.getImageData(0, 0, canvas.width, canvas.height);
           var gray = KC.grayFromRGBA(imgData.data, canvas.width, canvas.height);
           var bands = KC.detectFigureBands(gray, canvas.width, canvas.height, ocr.words);
+          /* 罫線表のバンドは画像にせず、内部の行に tableId を付けて選択肢化する */
+          var classified = KC.classifyBands(bands, ordered);
           var figEvents = [];
-          bands.forEach(function(band){
-            var url = KC.cropBandToDataURL(canvas, band);
+          classified.forEach(function(cb, ci){
+            if(cb.kind === "table"){
+              ordered.forEach(function(line){
+                var cx = line.x + line.width / 2, cy = line.y + line.height / 2;
+                if(cx >= cb.band.xMin && cx <= cb.band.xMax && cy >= cb.band.yMin && cy <= cb.band.yMax){
+                  line.tableId = (p - 1) + ":" + ci;
+                }
+              });
+              return;
+            }
+            var url = KC.cropBandToDataURL(canvas, cb.band);
             if(url){
               figureCount++;
-              figEvents.push({ kind: "figure", y: band.yMin, page: p - 1, src: url });
+              figEvents.push({ kind: "figure", y: cb.band.yMin, page: p - 1, src: url });
             }
           });
           KC.mergePageEvents(lineEvents, figEvents).forEach(function(ev){ allEvents.push(ev); });
@@ -940,7 +945,6 @@ async function renderLibrary(){
       + '<p class="ediag">' + exam.pageCount + "ページ／行 " + exam.lineCount + "／図 " + exam.figureCount + (exam.renderEngine ? "／描画 " + exam.renderEngine : "") + "</p>"
       + '<div class="erow">'
       + '<button class="btn solid small" data-action="solve">解く</button>'
-      + '<button class="btn small" data-action="key">正解を編集</button>'
       + '<button class="btn small" data-action="regen">再生成</button>'
       + '<button class="btn danger small" data-action="del">削除</button>'
       + "</div>";
