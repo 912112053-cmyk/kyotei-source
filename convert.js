@@ -383,6 +383,72 @@ function detectFigureBands(gray, W, H, wordBoxes){
   return bands;
 }
 
+/* ================================================================
+   バンドの「表」判定
+   罫線で組まれた選択肢表は、図バンドとして検出されても画像にしては
+   いけない（行がタップできる選択肢にならない）。一方、図版・地図・
+   グラフの内部にもラベル等の OCR 行は多数含まれるため、単なる
+   テキスト密度では区別できない。判別には表のグリッド構造を使う:
+   - 優先ルール: 丸数字で始まる選択肢行を2行以上含むバンドは表。
+   - 罫線グリッド: セルが3つ以上に割れる行が3行以上あり、その行々に
+     罫線由来の "|" を含む行が2行以上あり、行の開始 x と幅がそろう。
+   ================================================================ */
+/* 行頭が丸数字（①〜⑳）そのものか。choiceStart の (1) / 1. 形式は
+   含めない（グラフ軸の「10.000」等を丸数字行と誤認しないため） */
+function circledStart(rawLine){
+  var line = rawLine.replace(/^\s+|\s+$/g, "");
+  if(!line) return false;
+  if(CIRCLED.indexOf(line.charAt(0)) < 0) return false;
+  var rest = line.slice(1).replace(/^\s+|\s+$/g, "");
+  if(!rest) return false;
+  if(rest.indexOf("のうちから") >= 0 && line.length <= 40) return false;
+  return true;
+}
+
+/* 表の1行をセルに割る（罫線の "|" と3つ以上の空白がセル境界） */
+function tableCells(text){
+  var out = [];
+  String(text).split(/\s*\|\s*/).forEach(function(part){
+    part.split(/\s{3,}|　{2,}/).forEach(function(seg){
+      var t = seg.replace(/^\s+|\s+$/g, "");
+      if(t) out.push(t);
+    });
+  });
+  return out;
+}
+
+/* バンドが「表」か「図」か。lines はそのページの OCR 行（bbox 中心が
+   バンド内にある行を内部行とする） */
+function classifyBand(band, lines){
+  var inside = [];
+  (lines || []).forEach(function(l){
+    var cx = l.x + l.width / 2, cy = l.y + l.height / 2;
+    if(cx >= band.xMin && cx <= band.xMax && cy >= band.yMin && cy <= band.yMax) inside.push(l);
+  });
+  if(inside.length < 3) return "figure";
+  var cs = 0;
+  inside.forEach(function(l){ if(circledStart(l.text)) cs++; });
+  if(cs >= 2) return "table";
+  var rows = inside.filter(function(l){ return tableCells(l.text).length >= 3; });
+  var pipeRows = inside.filter(function(l){
+    return l.text.indexOf("|") >= 0 && tableCells(l.text).length >= 2;
+  });
+  if(rows.length >= 3 && pipeRows.length >= 2){
+    var xs = rows.map(function(l){ return l.x; });
+    var ws = rows.map(function(l){ return l.width; });
+    var xSpread = Math.max.apply(null, xs) - Math.min.apply(null, xs);
+    var wSpread = Math.max.apply(null, ws) - Math.min.apply(null, ws);
+    var meanW = ws.reduce(function(a, b){ return a + b; }, 0) / ws.length;
+    if(xSpread <= 0.04 && wSpread <= 0.15 && meanW >= 0.6 * (band.xMax - band.xMin)) return "table";
+  }
+  return "figure";
+}
+function classifyBands(bands, lines){
+  return (bands || []).map(function(band){
+    return { band: band, kind: classifyBand(band, lines) };
+  });
+}
+
 /* バンドを切り取って JPEG data URL 化（ブラウザ専用。パディング = ページ高の1.5%） */
 function cropBandToDataURL(canvas, band){
   var W = canvas.width, H = canvas.height;
@@ -652,11 +718,18 @@ function FlowBuilder(){
   this.groupStem = [];
   this.groupPage = 0;
   this.choiceBaseX = 0;
+  this.openTableId = null;
+  this.tableHeaderDone = false;
+  this.absorbedOrphans = 0;
+  this.bufferLine = null;
+  this.bufferLineCount = 0;
 }
 FlowBuilder.prototype.flushParagraph = function(){
   if(!this.paraBuffer) return;
   this.pendingParas.push({ page: this.paraPage, text: this.paraBuffer });
   this.paraBuffer = "";
+  this.bufferLine = null;
+  this.bufferLineCount = 0;
 };
 FlowBuilder.prototype.closeGroup = function(){
   if(this.openChoices === null) return;
@@ -673,13 +746,17 @@ FlowBuilder.prototype.closeGroup = function(){
 };
 FlowBuilder.prototype.addParagraphLine = function(line){
   if(!this.paraBuffer){
-    this.paraBuffer = line.text; this.paraPage = line.page; return;
+    this.paraBuffer = line.text; this.paraPage = line.page;
+    this.bufferLine = line; this.bufferLineCount = 1;
+    return;
   }
   if(beginsParagraph(line.text) || endsSentence(this.paraBuffer)){
     this.flushParagraph();
     this.paraBuffer = line.text; this.paraPage = line.page;
+    this.bufferLine = line; this.bufferLineCount = 1;
   } else {
     this.paraBuffer += line.text;
+    this.bufferLineCount++;
   }
 };
 FlowBuilder.prototype.addChoice = function(text, line){
@@ -695,6 +772,26 @@ FlowBuilder.prototype.addChoice = function(text, line){
   this.openChoices.push(text);
 };
 FlowBuilder.prototype.addLine = function(line){
+  /* 表バンド内の行: 先頭行（丸数字で始まらない行）は見出しとして題幹段落、
+     残りの行は1行 = 1選択肢（セルを「 ／ 」でつなぐ） */
+  if(line.tableId != null){
+    if(this.openTableId !== line.tableId){
+      this.closeGroup();
+      this.openTableId = line.tableId;
+      this.tableHeaderDone = false;
+    }
+    if(!this.tableHeaderDone && !choiceStart(line.text) && !circledStart(line.text)){
+      this.tableHeaderDone = true;
+      this.flushParagraph();
+      this.addParagraphLine(line);
+      return;
+    }
+    this.tableHeaderDone = true;
+    var cells = tableCells(line.text);
+    this.addChoice(cells.length ? cells.join(" ／ ") : line.text, line);
+    return;
+  }
+  this.openTableId = null;
   if(isQuestionHeader(line.text)){
     this.closeGroup();
     this.flushParagraph();
@@ -731,8 +828,22 @@ FlowBuilder.prototype.addLine = function(line){
   }
   this.addParagraphLine(line);
 };
-FlowBuilder.prototype.addFigure = function(src, page){
+FlowBuilder.prototype.addFigure = function(src, page, figY){
   this.closeGroup();
+  /* 図の上端に重なる1〜2文字だけの段落は、図中見出しの断片（例:「地図」の
+     「地」だけが行として残ったもの）。文字は図の画像内に見えているため、
+     独立段落として出さず図に吸収する（ドロップではなく merged として数える） */
+  if(this.paraBuffer && this.bufferLineCount === 1 && this.bufferLine
+     && this.bufferLine.page === page
+     && this.paraBuffer.replace(/\s/g, "").length <= 2
+     && figY != null
+     && figY < this.bufferLine.y + this.bufferLine.height
+     && figY > this.bufferLine.y - 0.05){
+    this.paraBuffer = "";
+    this.bufferLine = null;
+    this.bufferLineCount = 0;
+    this.absorbedOrphans++;
+  }
   this.flushParagraph();
   var self = this;
   this.pendingParas.forEach(function(p){
@@ -756,9 +867,10 @@ function runFlow(events){
   var b = new FlowBuilder();
   events.forEach(function(ev){
     if(ev.kind === "line") b.addLine(ev.line);
-    else if(ev.kind === "figure") b.addFigure(ev.src, ev.page);
+    else if(ev.kind === "figure") b.addFigure(ev.src, ev.page, ev.y);
   });
   b.finish();
+  b.elements.absorbedOrphans = b.absorbedOrphans;
   return b.elements;
 }
 function countQuestions(elements){
@@ -845,8 +957,10 @@ function segmentByAnchors(events, expectedCount){
   /* セグメントごとに FlowBuilder で要素化。選択肢グループが取れなかった
      セグメントは、題幹だけの設問として補う（NO-DROP は維持） */
   var elements = [];
+  var absorbedTotal = 0;
   function feedRange(from, to){
     var sub = runFlow(events.slice(from, to));
+    absorbedTotal += sub.absorbedOrphans || 0;
     sub.forEach(function(e){ elements.push(e); });
     return sub;
   }
@@ -873,7 +987,7 @@ function segmentByAnchors(events, expectedCount){
     void si;
   });
   if(segStart < events.length) feedRange(segStart, events.length);
-  return { elements: elements, questions: countQuestions(elements), method: "anchors", anchorsFound: anchors.length };
+  return { elements: elements, questions: countQuestions(elements), method: "anchors", anchorsFound: anchors.length, absorbedOrphans: absorbedTotal };
 }
 
 /* ================================================================
@@ -901,16 +1015,28 @@ function mergeFragments(elements, targetCount){
     els.forEach(function(e, i){ if(e.type === "question") idx.push(i); });
     return idx;
   }
+  /* 直前（前の設問との間）に「問 N」開始行の段落と図の両方がある設問は、
+     図にプロンプトが分断されただけの本物の設問なので、統合候補では後回しにする */
+  function promptBefore(idx){
+    var page = els[idx].page, hasPrompt = false, hasFigure = false;
+    for(var j = idx - 1; j >= 0 && els[j].type !== "question"; j--){
+      if(els[j].page !== page) continue;
+      if(els[j].type === "paragraph" && isQuestionStartLine(els[j].text)) hasPrompt = true;
+      if(els[j].type === "figure") hasFigure = true;
+    }
+    return hasPrompt && hasFigure;
+  }
   while(true){
     var idxs = qIndices();
     if(targetCount > 0 && idxs.length <= targetCount) break;
     /* 最も断片らしい設問（選択肢が少ない順）を1つ選ぶ */
-    var bestPos = -1, bestChoices = Infinity;
+    var bestPos = -1, bestScore = Infinity;
     for(var n = 0; n < idxs.length; n++){
       var q = els[idxs[n]];
       if(!questionIsFragment(q)) continue;
       if(targetCount <= 0 && q.choices.length > 1) continue;
-      if(q.choices.length < bestChoices){ bestChoices = q.choices.length; bestPos = n; }
+      var score = (promptBefore(idxs[n]) ? 1000 : 0) + q.choices.length;
+      if(score < bestScore){ bestScore = score; bestPos = n; }
     }
     if(bestPos < 0) break;
     if(bestPos === 0) break; /* 先頭の設問は統合先がない */
@@ -933,20 +1059,20 @@ function buildElements(events, expectedCount){
   var q0 = countQuestions(base);
   if(expectedCount && expectedCount >= 4 && q0 > expectedCount){
     var merged = mergeFragments(base, expectedCount);
-    return { elements: merged, questions: countQuestions(merged), method: "flow+merge" };
+    return { elements: merged, questions: countQuestions(merged), method: "flow+merge", absorbedOrphans: base.absorbedOrphans || 0 };
   }
   if(!expectedCount){
     var merged2 = mergeFragments(base, 0);
-    return { elements: merged2, questions: countQuestions(merged2), method: "flow+merge" };
+    return { elements: merged2, questions: countQuestions(merged2), method: "flow+merge", absorbedOrphans: base.absorbedOrphans || 0 };
   }
   if(q0 >= expectedCount){
-    return { elements: base, questions: q0, method: "flow" };
+    return { elements: base, questions: q0, method: "flow", absorbedOrphans: base.absorbedOrphans || 0 };
   }
   var anchored = segmentByAnchors(events, expectedCount);
   if(anchored && anchored.questions > q0){
     return anchored;
   }
-  return { elements: base, questions: q0, method: "flow" };
+  return { elements: base, questions: q0, method: "flow", absorbedOrphans: base.absorbedOrphans || 0 };
 }
 
 /* 1ページ分の行イベントと図イベントを読み順に混ぜる（同yでは行が先） */
@@ -1121,6 +1247,10 @@ var KyoteiConvert = {
   ocrImage: ocrImage,
   grayFromRGBA: grayFromRGBA,
   detectFigureBands: detectFigureBands,
+  circledStart: circledStart,
+  tableCells: tableCells,
+  classifyBand: classifyBand,
+  classifyBands: classifyBands,
   cropBandToDataURL: cropBandToDataURL,
   readingOrder: readingOrder,
   isNoiseLine: isNoiseLine,
