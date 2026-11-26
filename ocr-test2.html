@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>OCR test 2 — pdf.js render vs MuPDF PNG</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.5/dist/tesseract.min.js"></script>
+<script src="convert.js"></script>
+<style>img,canvas{border:1px solid #888;max-width:46%;vertical-align:top}</style>
+</head>
+<body>
+<h1>OCR test 2</h1>
+<pre id="out">starting…</pre>
+<div id="imgs"></div>
+<script>
+var out = document.getElementById("out");
+function log(s){ out.textContent += "\n" + s; }
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+var RENDER_SCALE = 200 / 72;
+async function renderPageToCanvas(page){
+  var viewport = page.getViewport({ scale: RENDER_SCALE });
+  var canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  var ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+  return canvas;
+}
+(async function(){
+  try{
+    var buf = await (await fetch("test-question.pdf")).arrayBuffer();
+    var doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    log("pages=" + doc.numPages);
+    var worker = await Tesseract.createWorker("jpn");
+    for(var pno of [2, 3]){
+      var page = await doc.getPage(pno);
+      var canvas = await renderPageToCanvas(page);
+      log("pdf.js page " + pno + " canvas: " + canvas.width + "x" + canvas.height);
+      var ocr = await KyoteiConvert.ocrImage(worker, canvas, canvas.width, canvas.height);
+      log("pdf.js page " + pno + ": lines=" + ocr.lines.length + " words=" + ocr.words.length);
+      log("pdf.js page " + pno + " first: " + ocr.lines.slice(0,3).map(function(l){ return l.text; }).join(" | "));
+      var holder = document.createElement("div");
+      var cap = document.createElement("p");
+      cap.textContent = "pdf.js render page " + pno;
+      holder.appendChild(cap); holder.appendChild(canvas);
+      document.getElementById("imgs").appendChild(holder);
+    }
+    await worker.terminate();
+    log("DONE");
+  }catch(e){
+    log("ERROR: " + (e && e.message || e));
+  }
+})();
+</script>
+</body>
+</html>
