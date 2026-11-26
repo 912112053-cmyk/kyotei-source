@@ -6,11 +6,11 @@
       "name": "共テ",
       "bundleIdentifier": "com.yabaiya.kyoteitap",
       "developerName": "yabaiya",
-      "version": "1.1",
-      "versionDate": "2026-11-26T22:05:00+09:00",
+      "version": "1.2",
+      "versionDate": "2026-11-26T22:20:00+09:00",
       "downloadURL": "https://912112053-cmyk.github.io/kyotei-source/KyoteiTap.ipa",
       "iconURL": "https://912112053-cmyk.github.io/kyotei-source/AppIcon1024.png",
-      "size": 512528,
+      "size": 835936,
       "localizedDescription": "模試PDFを取り込んで、タップで解ける形に組み直す共テ勉強アプリ。タイマー・採点・解答出力つき。"
     }
   ],
