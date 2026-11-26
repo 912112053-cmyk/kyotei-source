@@ -1,10 +1,12 @@
 /* 共テ Service Worker
-   - アプリ本体（index.html / manifest / アイコン）はインストール時に先読みキャッシュ
-   - CDN ライブラリ（pdf.js / tesseract.js / wasm コア / 日本語学習データ）は
-     実行時にキャッシュし、次回からはキャッシュ優先（オフライン対応） */
+   - アプリ本体（同一オリジン）は network-first: 常に最新を取りに行き、
+     取れたらキャッシュを更新。オフライン時のみキャッシュを使う
+     （旧版 index がキャッシュに張り付いて更新が届かない事故の対策）
+   - CDN ライブラリ（pdf.js / tesseract.js / wasm / MuPDF / 学習データ）は
+     cache-first で実行時キャッシュ（オフライン対応・高速化） */
 "use strict";
 
-var CACHE_NAME = "kyotei-web-v5";
+var CACHE_NAME = "kyotei-web-v6";
 
 var PRECACHE_URLS = [
   "./",
@@ -16,8 +18,6 @@ var PRECACHE_URLS = [
   "./icon-192.png"
 ];
 
-/* キャッシュ対象の CDN ホスト（pdf.js, tesseract.js 本体・worker・core(wasm),
-   tessdata の言語データを含む） */
 var CDN_HOSTS = [
   "cdnjs.cloudflare.com",
   "cdn.jsdelivr.net",
@@ -49,18 +49,33 @@ self.addEventListener("activate", function (event) {
   );
 });
 
-function isCacheable(url) {
-  if (url.origin === self.location.origin) return true;
-  return CDN_HOSTS.indexOf(url.hostname) !== -1;
-}
-
 self.addEventListener("fetch", function (event) {
   var request = event.request;
   if (request.method !== "GET") return;
   var url;
   try { url = new URL(request.url); } catch (e) { return; }
-  if (!isCacheable(url)) return;
 
+  if (url.origin === self.location.origin) {
+    /* アプリ本体: network-first */
+    event.respondWith(
+      fetch(request).then(function (response) {
+        if (response && response.status === 200) {
+          var copy = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) {
+            cache.put(request, copy);
+          });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match(request, { ignoreSearch: false });
+      })
+    );
+    return;
+  }
+
+  if (CDN_HOSTS.indexOf(url.hostname) === -1) return;
+
+  /* CDN: cache-first */
   event.respondWith(
     caches.match(request, { ignoreSearch: false }).then(function (cached) {
       if (cached) return cached;
