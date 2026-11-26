@@ -101,7 +101,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v6（MuPDF描画）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v7（MuPDF描画）</p>
   </section>
 
   <!-- 取り込み -->
@@ -961,7 +961,7 @@ async function onExamAction(action, exam, btnEl){
   } else if(action === "del"){
     var delBtn = btnEl || null;
     if(!delBtn || delBtn.dataset.armed !== "1"){
-      if(delBtn){ delBtn.dataset.armed = "1"; delBtn.textContent = "本当に削除"; setTimeout(function(){ if(delBtn.isConnected){ delBtn.dataset.armed = ""; delBtn.textContent = "削除"; } }, 3000); }
+      if(delBtn){ delBtn.dataset.armed = "1"; delBtn.textContent = "本当に削除"; setTimeout(function(){ if(delBtn.isConnected){ delBtn.dataset.armed = ""; delBtn.textContent = "削除"; } }, 8000); }
       return;
     }
     await idbDelete(exam.id);
@@ -1105,6 +1105,7 @@ $("impStart").addEventListener("click", async function(){
       questionCount: r.questionCount, generatedHTML: r.generatedHTML,
       answerKey: r.answerKey, points: r.points,
       pageCount: r.pageCount, lineCount: r.lineCount, figureCount: r.figureCount,
+      renderEngine: r.renderEngine,
       questionPDF: qBuf, answerPDF: aBuf
     };
     await idbPut(exam);
