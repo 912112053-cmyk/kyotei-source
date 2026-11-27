@@ -111,9 +111,31 @@ function answerJoinedText(pages){
    解答番号 → (正解, 配点) を登録する。
    ================================================================ */
 function parseAnswerKeyGeometric(pages){
-  var key = {}, points = {};
+  var key = {}, points = {}, secTotals = {};
   pages.forEach(function(pg){
     var mid = pg.width / 2;
+    /* 大問の見出し（第N問）と、その真下に置かれた小計（NN）を取り出す。
+       見出しラベルは大問の行範囲の中央あたりに置かれるため位置では割り当て
+       できないが、小計は配点の累積と一致するので範囲を厳密に決められる。 */
+    var heads = [], subs = [];
+    pg.items.forEach(function(it){
+      var t = normalizeDigits(String(it.str || "").replace(/^\s+|\s+$/g, ""));
+      var m = t.match(/^第([0-9]+)問$/);
+      if(m) heads.push({ no: parseInt(m[1], 10), x: it.x, y: it.y });
+      var s = t.match(/^[（(]([0-9]+)[）)]$/);
+      if(s) subs.push({ v: parseInt(s[1], 10), x: it.x, y: it.y });
+    });
+    heads.forEach(function(hd){
+      if(secTotals[hd.no] != null) return;
+      var best = null;
+      subs.forEach(function(sb){
+        if((sb.x < mid) !== (hd.x < mid)) return;
+        if(Math.abs(sb.x - hd.x) > 30) return;
+        var dy = hd.y - sb.y;
+        if(dy >= 10 && dy <= 40 && (!best || dy < best.dy)) best = { v: sb.v, dy: dy };
+      });
+      if(best) secTotals[hd.no] = best.v;
+    });
     var nums = [];
     pg.items.forEach(function(it){
       var t = normalizeDigits(String(it.str || "").replace(/^\s+|\s+$/g, ""));
@@ -151,7 +173,26 @@ function parseAnswerKeyGeometric(pages){
       });
     });
   });
-  return { key: key, points: points, count: Object.keys(key).length };
+  /* 大問の範囲: 大問番号の昇順に、配点の累積がその大問の小計と一致した
+     ところで区切る。全問を漏れなく覆い、大問が2つ以上あるときだけ採用。 */
+  var sections = null;
+  var secNos = Object.keys(secTotals).map(function(k){ return parseInt(k, 10); })
+    .sort(function(a, b){ return a - b; });
+  var totalCount = Object.keys(key).length;
+  if(secNos.length >= 2 && totalCount >= 3){
+    var groups = [], n = 1, okSec = true;
+    for(var si = 0; si < secNos.length && okSec; si++){
+      var from = n, sum = 0, target = secTotals[secNos[si]];
+      while(n <= totalCount && sum < target){
+        if(points[n] == null){ okSec = false; break; }
+        sum += points[n]; n += 1;
+      }
+      if(sum !== target || n - 1 < from) okSec = false;
+      else groups.push({ label: "第" + secNos[si] + "問", from: from, to: n - 1 });
+    }
+    if(okSec && n === totalCount + 1) sections = groups;
+  }
+  return { key: key, points: points, count: totalCount, sections: sections };
 }
 
 /* 幾何パースの結果が「1..max の 90% 以上をカバー」しているか */
@@ -166,14 +207,14 @@ function keyCoverage(parsed){
 function parseAnswerKeyFromPages(pages){
   var geo = parseAnswerKeyGeometric(pages);
   if(geo.count >= 3 && keyCoverage(geo) >= 0.9){
-    return { key: geo.key, points: geo.points, count: geo.count, method: "geometric" };
+    return { key: geo.key, points: geo.points, count: geo.count, method: "geometric", sections: geo.sections || null };
   }
   var scanned = scanAnswerTokens(tokenize(answerJoinedText(pages)));
   var sCount = Object.keys(scanned.key).length;
   if(sCount > geo.count){
-    return { key: scanned.key, points: scanned.points, count: sCount, method: "scan" };
+    return { key: scanned.key, points: scanned.points, count: sCount, method: "scan", sections: null };
   }
-  return { key: geo.key, points: geo.points, count: geo.count, method: geo.count ? "geometric" : "none" };
+  return { key: geo.key, points: geo.points, count: geo.count, method: geo.count ? "geometric" : "none", sections: geo.sections || null };
 }
 
 var KyoteiConvert = {
