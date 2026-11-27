@@ -6,7 +6,7 @@
      cache-first で実行時キャッシュ（オフライン対応・高速化） */
 "use strict";
 
-var CACHE_NAME = "kyotei-web-v15";
+var CACHE_NAME = "kyotei-web-v16";
 
 var PRECACHE_URLS = [
   "./",
