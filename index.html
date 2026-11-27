@@ -49,7 +49,7 @@
   .exam-card .erow{display:flex;gap:8px;flex-wrap:wrap}
   .fld{display:block;margin:0 0 18px}
   .fld>span{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
-  .fld input[type=text]{width:100%;font:inherit;font-size:15px;padding:10px 12px;border:1px solid var(--line);
+  .fld input[type=text],.fld input[type=url]{width:100%;font:inherit;font-size:15px;padding:10px 12px;border:1px solid var(--line);
     border-radius:6px;background:var(--card);color:var(--ink)}
   .filebtn{display:inline-flex;align-items:center;gap:8px;border:1px dashed var(--mut);border-radius:6px;
     padding:10px 14px;cursor:pointer;font-size:13.5px;background:var(--card);max-width:100%}
@@ -155,7 +155,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v14（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v15（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -166,11 +166,13 @@
     </label>
     <div class="fld"><span>問題PDF（必須）</span>
       <label class="filebtn"><input type="file" id="impQ" accept="application/pdf" class="visually-hidden"><span>PDFを選ぶ</span><span class="fname" id="impQName"></span></label>
+      <input type="url" id="impQUrl" placeholder="または PDFのURLを貼る" autocomplete="off">
     </div>
     <div class="fld"><span>解答PDF（任意）</span>
       <label class="filebtn"><input type="file" id="impA" accept="application/pdf" class="visually-hidden"><span>PDFを選ぶ</span><span class="fname" id="impAName"></span></label>
+      <input type="url" id="impAUrl" placeholder="または PDFのURLを貼る" autocomplete="off">
       <button class="btn small" id="impAClear" hidden>解答PDFを外す</button>
-      <p class="muted">解答PDFがあると、マークシートで採点できます。ない場合は、採点なしで解く形になります。</p>
+      <p class="muted">解答PDFがあると、マークシートで採点できます。ない場合は、採点なしで解く形になります。URLは、サイト側が外部からの取得を許可していないと使えません（その場合はファイルをダウンロードして選んでください）。</p>
     </div>
     <p class="err" id="impError"></p>
     <div class="row">
@@ -1093,14 +1095,32 @@ function resetImport(){
   $("impQName").textContent = "";
   $("impAName").textContent = "";
   $("impQ").value = ""; $("impA").value = "";
+  $("impQUrl").value = ""; $("impAUrl").value = "";
   $("impAClear").hidden = true;
   $("impError").textContent = "";
+}
+async function fetchPdfBuffer(url){
+  var res = await fetch(url);
+  if(!res.ok) throw new Error("URLから取得できませんでした（" + res.status + "）");
+  var buf = await res.arrayBuffer();
+  var head = new Uint8Array(buf.slice(0, 4));
+  if(!(head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46)){
+    throw new Error("URLの先がPDFではありませんでした");
+  }
+  return buf;
+}
+function urlFileName(url){
+  try{
+    var p = new URL(url).pathname.split("/").pop() || "";
+    return decodeURIComponent(p).replace(/\.pdf$/i, "");
+  }catch(e){ return ""; }
 }
 $("btnNew").addEventListener("click", function(){ resetImport(); showView("import"); });
 $("impCancel").addEventListener("click", function(){ showView("library"); });
 $("impQ").addEventListener("change", function(){
   impQFile = this.files && this.files[0] ? this.files[0] : null;
   $("impQName").textContent = impQFile ? impQFile.name : "";
+  if(impQFile) $("impQUrl").value = "";
   if(impQFile && !$("impTitle").value){
     $("impTitle").value = impQFile.name.replace(/\.pdf$/i, "");
   }
@@ -1108,25 +1128,51 @@ $("impQ").addEventListener("change", function(){
 $("impA").addEventListener("change", function(){
   impAFile = this.files && this.files[0] ? this.files[0] : null;
   $("impAName").textContent = impAFile ? impAFile.name : "";
-  $("impAClear").hidden = !impAFile;
+  if(impAFile) $("impAUrl").value = "";
+  $("impAClear").hidden = !(impAFile || $("impAUrl").value);
+});
+$("impQUrl").addEventListener("input", function(){
+  if(this.value){ impQFile = null; $("impQ").value = ""; $("impQName").textContent = ""; }
+});
+$("impAUrl").addEventListener("input", function(){
+  if(this.value){ impAFile = null; $("impA").value = ""; $("impAName").textContent = ""; }
+  $("impAClear").hidden = !(impAFile || this.value);
 });
 $("impAClear").addEventListener("click", function(){
   impAFile = null;
   $("impA").value = "";
+  $("impAUrl").value = "";
   $("impAName").textContent = "";
   $("impAClear").hidden = true;
 });
 $("impStart").addEventListener("click", async function(){
   $("impError").textContent = "";
-  if(!impQFile){
-    $("impError").textContent = "問題PDFを選んでください。";
+  var qUrl = $("impQUrl").value.replace(/^\s+|\s+$/g, "");
+  var aUrl = $("impAUrl").value.replace(/^\s+|\s+$/g, "");
+  if(!impQFile && !qUrl){
+    $("impError").textContent = "問題PDFを選ぶか、URLを入力してください。";
     return;
   }
-  var title = $("impTitle").value.replace(/^\s+|\s+$/g, "") || impQFile.name.replace(/\.pdf$/i, "");
+  var title = $("impTitle").value.replace(/^\s+|\s+$/g, "")
+    || (impQFile ? impQFile.name.replace(/\.pdf$/i, "") : urlFileName(qUrl))
+    || "模試";
   try{
-    setProgress("PDFを読み込んでいます…", "");
-    var qBuf = await impQFile.arrayBuffer();
-    var aBuf = impAFile ? await impAFile.arrayBuffer() : null;
+    var qBuf, aBuf = null;
+    if(impQFile){
+      setProgress("PDFを読み込んでいます…", "");
+      qBuf = await impQFile.arrayBuffer();
+    }else{
+      setProgress("URLから問題PDFを取得しています…", "");
+      try{ qBuf = await fetchPdfBuffer(qUrl); }
+      catch(fe){ throw new Error("問題PDFをURLから取得できませんでした。サイト側が許可していない可能性があります。ファイルをダウンロードして選んでください。"); }
+    }
+    if(impAFile){
+      aBuf = await impAFile.arrayBuffer();
+    }else if(aUrl){
+      setProgress("URLから解答PDFを取得しています…", "");
+      try{ aBuf = await fetchPdfBuffer(aUrl); }
+      catch(fe){ throw new Error("解答PDFをURLから取得できませんでした。サイト側が許可していない可能性があります。ファイルをダウンロードして選んでください。"); }
+    }
     var r = await convertExam({ qBuf: qBuf, aBuf: aBuf });
     var exam = {
       id: newId(), title: title, createdAt: Date.now(),
