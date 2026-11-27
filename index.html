@@ -151,7 +151,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v11（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v12（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -183,7 +183,7 @@
     <button class="btn ghost small" id="solveBack">← 戻る</button>
     <span class="stitle" id="solveTitle"></span>
     <span class="stimer" id="solveTimer">00:00</span>
-    <button class="btn ghost small" id="btnZoom">ズーム 100%</button>
+    <button class="btn ghost small" id="btnZoomOut">－</button><span class="stimer" id="zoomPct">100%</span><button class="btn ghost small" id="btnZoomIn">＋</button>
     <button class="btn ghost small" id="btnSheet">マークシート</button>
     <button class="btn ghost small" id="btnHideBar">隠す</button>
   </div>
@@ -581,7 +581,8 @@ var solveTimerId = null;
 var solveZoomIdx = 0;
 var solveObjectURLs = [];
 var sheetGraded = false;
-var ZOOMS = [100, 150, 200];
+var ZOOMS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
+var ZOOM_DEFAULT_IDX = 5; /* 100% */
 
 function marksKey(examId){ return "kyotei-marks-" + examId; }
 function saveSolveState(){
@@ -614,9 +615,9 @@ function openSolve(exam){
   solveExam = exam;
   loadSolveState(exam.id);
   sheetGraded = false;
-  solveZoomIdx = 0;
-  $("btnZoom").textContent = "ズーム 100%";
+  solveZoomIdx = ZOOM_DEFAULT_IDX;
   $("pagesInner").style.width = "100%";
+  $("zoomPct").textContent = "100%";
   $("solveTitle").textContent = exam.title;
   drawSolveTimer();
   /* ページ画像を並べる（ページ自体には何も重ねない） */
@@ -663,12 +664,17 @@ function showSolveBar(show){
 $("btnHideBar").addEventListener("click", function(){ showSolveBar(false); });
 $("solveMenuPill").addEventListener("click", function(){ showSolveBar(true); });
 
-/* ズーム: 100% → 150% → 200% → 100%（横スクロールは #pagesScroll が担う） */
-$("btnZoom").addEventListener("click", function(){
-  solveZoomIdx = (solveZoomIdx + 1) % ZOOMS.length;
+/* ズーム: －/＋で 50%〜300% を段階調整（100%未満は中央寄せ、超過分は #pagesScroll が横スクロール） */
+function applyZoom(){
   var z = ZOOMS[solveZoomIdx];
   $("pagesInner").style.width = z + "%";
-  $("btnZoom").textContent = "ズーム " + z + "%";
+  $("zoomPct").textContent = z + "%";
+}
+$("btnZoomOut").addEventListener("click", function(){
+  if(solveZoomIdx > 0){ solveZoomIdx--; applyZoom(); }
+});
+$("btnZoomIn").addEventListener("click", function(){
+  if(solveZoomIdx < ZOOMS.length - 1){ solveZoomIdx++; applyZoom(); }
 });
 
 /* ================================================================
