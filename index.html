@@ -157,7 +157,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v16（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v17（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -988,6 +988,9 @@ function closeSheet(){
 }
 $("btnSheet").addEventListener("click", openSheet);
 $("sheetClose").addEventListener("click", closeSheet);
+$("sheetOverlay").addEventListener("click", function(e){
+  if(e.target === this) closeSheet();
+});
 
 /* ---------- 採点 ---------- */
 function gradeSheet(){
