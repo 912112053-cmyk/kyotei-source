@@ -164,7 +164,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v18（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v19（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -199,6 +199,7 @@
     <span class="stitle" id="solveTitle"></span>
     <span class="stimer" id="solveTimer">00:00</span>
     <button class="btn ghost small" id="btnTimerToggle">一時停止</button>
+    <button class="btn ghost small" id="btnTimerReset">時間リセット</button>
     <button class="btn ghost small" id="btnZoomOut">－</button><span class="stimer" id="zoomPct">100%</span><button class="btn ghost small" id="btnZoomIn">＋</button>
     <button class="btn ghost small" id="btnPen">ペン</button>
     <button class="btn ghost small" id="btnEraser">消しゴム</button>
@@ -537,7 +538,7 @@ async function renderLibrary(){
       + "　" + exam.pageCount + "ページ</p>"
       + '<div class="erow">'
       + '<button class="btn solid small" data-action="solve">解く</button>'
-      + '<button class="btn small" data-action="regen">再生成</button>'
+
       + '<button class="btn danger small" data-action="del">削除</button>'
       + "</div>";
     card.querySelectorAll("button").forEach(function(btn){
@@ -676,6 +677,13 @@ function stopSolveTimer(){
 $("btnTimerToggle").addEventListener("click", function(){
   if(solveCounting) setCounting(false);
   else { solveFinished = false; setCounting(true); }
+  saveSolveState();
+});
+$("btnTimerReset").addEventListener("click", function(){
+  solveElapsed = 0;
+  solveFinished = false;
+  drawSolveTimer();
+  setCounting(true);
   saveSolveState();
 });
 /* タブ/アプリが隠れたら自動で止める。戻ったときは、隠れる前に動いていて
