@@ -88,8 +88,13 @@
   #solveMenuPill[hidden]{display:none}
   #pagesScroll{flex:1;overflow:auto;-webkit-overflow-scrolling:touch}
   #pagesInner{margin:0 auto;padding:14px 10px 40px}
-  #pagesInner img{display:block;width:100%;height:auto;margin:0 auto 14px;background:#fff;
-    box-shadow:0 2px 10px rgba(0,0,0,.45)}
+  #pagesInner .pagewrap{position:relative;margin:0 auto 14px;background:#fff;
+    box-shadow:0 2px 10px rgba(0,0,0,.45);line-height:0}
+  #pagesInner .pagewrap img{display:block;width:100%;height:auto}
+  #pagesInner .pagewrap canvas{position:absolute;left:0;top:0;width:100%;height:100%;
+    pointer-events:none}
+  #pagesInner.ink-on .pagewrap canvas{pointer-events:auto;touch-action:none}
+  .solvebar .btn.tool-on{background:var(--accent);border-color:var(--accent);color:#fff}
 
   /* ================= マークシート ================= */
   #sheetOverlay{position:fixed;inset:0;z-index:50;background:rgba(15,14,12,.62);
@@ -151,7 +156,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v12（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v13（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -183,7 +188,11 @@
     <button class="btn ghost small" id="solveBack">← 戻る</button>
     <span class="stitle" id="solveTitle"></span>
     <span class="stimer" id="solveTimer">00:00</span>
+    <button class="btn ghost small" id="btnTimerToggle">一時停止</button>
     <button class="btn ghost small" id="btnZoomOut">－</button><span class="stimer" id="zoomPct">100%</span><button class="btn ghost small" id="btnZoomIn">＋</button>
+    <button class="btn ghost small" id="btnPen">ペン</button>
+    <button class="btn ghost small" id="btnEraser">消しゴム</button>
+    <button class="btn ghost small" id="btnInkClear" hidden>全消し</button>
     <button class="btn ghost small" id="btnSheet">マークシート</button>
     <button class="btn ghost small" id="btnHideBar">隠す</button>
   </div>
@@ -226,7 +235,7 @@
 <script>
 "use strict";
 /* ================================================================
-   共テ (Kyotei web) v11 — マークシート方式
+   共テ (Kyotei web) v13 — マークシート方式
    問題PDFは「元のページ画像」として表示し、解答は本物の共テ解答用紙と
    同じ「全行9択の楕円マークシート」で行う。OCR・文字の組み直しはしない。
    convert.js は解答PDFの正解・配点パース専用。
@@ -542,6 +551,7 @@ async function onExamAction(action, exam, btnEl){
     }
     await idbDelete(exam.id);
     try{ localStorage.removeItem("kyotei-marks-" + exam.id); }catch(e){}
+    try{ localStorage.removeItem("kyotei-ink-" + exam.id); }catch(e){}
     try{ localStorage.removeItem("kyotei-progress-" + exam.id); }catch(e){}
     await renderLibrary();
     toast("削除しました");
@@ -578,9 +588,16 @@ var solveExam = null;
 var solveMarks = {};       /* {解答番号: 選んだ数字} */
 var solveElapsed = 0;
 var solveTimerId = null;
+var solveCounting = false;    /* タイマーがカウント中か */
+var solveFinished = false;    /* 採点でタイマーが止まったか（保存される） */
+var solveWasCounting = false; /* 非表示になる直前にカウント中だったか */
 var solveZoomIdx = 0;
 var solveObjectURLs = [];
 var sheetGraded = false;
+var solveInk = {};            /* {ページindex: [stroke,...]} 手書き */
+var solvePages = [];          /* {idx, wrap, img, canvas} */
+var inkTool = null;           /* "pen" | "eraser" | null */
+var inkDrawing = null;        /* 描画中: {page, stroke} | {page, erase:true} */
 var ZOOMS = [50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
 var ZOOM_DEFAULT_IDX = 5; /* 100% */
 
@@ -589,7 +606,7 @@ function saveSolveState(){
   if(!solveExam) return;
   try{
     localStorage.setItem(marksKey(solveExam.id),
-      JSON.stringify({ m: solveMarks, e: solveElapsed }));
+      JSON.stringify({ m: solveMarks, e: solveElapsed, f: solveFinished ? 1 : 0 }));
   }catch(e){}
 }
 function loadSolveState(examId){
@@ -597,11 +614,27 @@ function loadSolveState(examId){
   try{ s = JSON.parse(localStorage.getItem(marksKey(examId)) || "null"); }catch(e){}
   solveMarks = (s && s.m) || {};
   solveElapsed = (s && s.e) || 0;
+  solveFinished = !!(s && s.f);
+}
+function inkKey(examId){ return "kyotei-ink-" + examId; }
+function saveInk(){
+  if(!solveExam) return;
+  try{ localStorage.setItem(inkKey(solveExam.id), JSON.stringify(solveInk)); }catch(e){}
+}
+function loadInk(examId){
+  var s = null;
+  try{ s = JSON.parse(localStorage.getItem(inkKey(examId)) || "null"); }catch(e){}
+  solveInk = (s && typeof s === "object") ? s : {};
 }
 function drawSolveTimer(){ $("solveTimer").textContent = fmtTime(solveElapsed); }
+function setCounting(on){
+  solveCounting = on;
+  $("btnTimerToggle").textContent = on ? "一時停止" : "再開";
+}
 function startSolveTimer(){
   stopSolveTimer();
   solveTimerId = setInterval(function(){
+    if(!solveCounting) return;
     solveElapsed++;
     drawSolveTimer();
     if(solveElapsed % 5 === 0) saveSolveState();
@@ -610,28 +643,67 @@ function startSolveTimer(){
 function stopSolveTimer(){
   if(solveTimerId){ clearInterval(solveTimerId); solveTimerId = null; }
 }
+$("btnTimerToggle").addEventListener("click", function(){
+  if(solveCounting) setCounting(false);
+  else { solveFinished = false; setCounting(true); }
+  saveSolveState();
+});
+/* タブ/アプリが隠れたら自動で止める。戻ったときは、隠れる前に動いていて
+   採点停止でもない場合だけ再開する */
+document.addEventListener("visibilitychange", function(){
+  if(!solveExam) return;
+  if(document.hidden){
+    solveWasCounting = solveCounting;
+    if(solveCounting) setCounting(false);
+    saveSolveState();
+  } else {
+    if(solveWasCounting && !solveFinished) setCounting(true);
+    solveWasCounting = false;
+  }
+});
 
 function openSolve(exam){
   solveExam = exam;
   loadSolveState(exam.id);
+  loadInk(exam.id);
   sheetGraded = false;
+  inkTool = null;
+  inkDrawing = null;
+  solveWasCounting = false;
   solveZoomIdx = ZOOM_DEFAULT_IDX;
   $("pagesInner").style.width = "100%";
+  $("pagesInner").classList.remove("ink-on");
+  $("btnPen").classList.remove("tool-on");
+  $("btnEraser").classList.remove("tool-on");
+  $("btnInkClear").hidden = true;
   $("zoomPct").textContent = "100%";
   $("solveTitle").textContent = exam.title;
   drawSolveTimer();
-  /* ページ画像を並べる（ページ自体には何も重ねない） */
+  /* ページ画像を並べる。各ページは img + 手書き用 canvas のラッパー。
+     アプリ側がページに印を付けることはない（canvas は初期状態では空） */
   var inner = $("pagesInner");
   inner.innerHTML = "";
   solveObjectURLs.forEach(function(u){ URL.revokeObjectURL(u); });
   solveObjectURLs = [];
-  (exam.pageImages || []).forEach(function(blob){
+  solvePages = [];
+  (exam.pageImages || []).forEach(function(blob, idx){
     var url = URL.createObjectURL(blob);
     solveObjectURLs.push(url);
+    var wrap = document.createElement("div");
+    wrap.className = "pagewrap";
     var img = document.createElement("img");
     img.src = url;
     img.alt = "";
-    inner.appendChild(img);
+    var canvas = document.createElement("canvas");
+    canvas.className = "ink";
+    wrap.appendChild(img);
+    wrap.appendChild(canvas);
+    inner.appendChild(wrap);
+    var page = { idx: idx, wrap: wrap, img: img, canvas: canvas };
+    solvePages.push(page);
+    attachInkHandlers(page);
+    img.addEventListener("load", function(){ syncInkCanvas(page); });
+    if(img.complete && img.naturalWidth) syncInkCanvas(page);
   });
   $("pagesScroll").scrollTop = 0;
   showSolveBar(true);
@@ -639,14 +711,23 @@ function openSolve(exam){
   $("appbar").hidden = true;
   $("mainArea").hidden = true;
   $("view-solve").hidden = false;
+  /* 表示されてからでないと img の実サイズが取れないため、次フレームで同期 */
+  requestAnimationFrame(function(){ solvePages.forEach(syncInkCanvas); });
+  setCounting(!solveFinished);
   startSolveTimer();
 }
 function closeSolve(){
   stopSolveTimer();
   saveSolveState();
+  saveInk();
+  inkTool = null;
+  inkDrawing = null;
+  solvePages = [];
+  solveInk = {};
   solveObjectURLs.forEach(function(u){ URL.revokeObjectURL(u); });
   solveObjectURLs = [];
   $("pagesInner").innerHTML = "";
+  $("pagesInner").classList.remove("ink-on");
   $("sheetOverlay").hidden = true;
   $("view-solve").hidden = true;
   $("appbar").hidden = false;
@@ -669,12 +750,129 @@ function applyZoom(){
   var z = ZOOMS[solveZoomIdx];
   $("pagesInner").style.width = z + "%";
   $("zoomPct").textContent = z + "%";
+  solvePages.forEach(syncInkCanvas);
 }
 $("btnZoomOut").addEventListener("click", function(){
   if(solveZoomIdx > 0){ solveZoomIdx--; applyZoom(); }
 });
 $("btnZoomIn").addEventListener("click", function(){
   if(solveZoomIdx < ZOOMS.length - 1){ solveZoomIdx++; applyZoom(); }
+});
+
+/* ================================================================
+   手書き（ペン / 消しゴム）
+   各ページの img の上に canvas を重ね、ユーザーの書き込みだけを描く。
+   ストロークはページ比座標 (0..1) + 相対線幅で保持し、
+   localStorage (kyotei-ink-<examId>) に保存する。
+   ツールが OFF の間は canvas が pointer-events:none になり、
+   通常のスクロールがそのまま効く。
+   ================================================================ */
+function syncInkCanvas(p){
+  var w = p.img.clientWidth, h = p.img.clientHeight;
+  if(!w || !h) return;
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  var bw = Math.round(w * dpr), bh = Math.round(h * dpr);
+  if(p.canvas.width !== bw) p.canvas.width = bw;
+  if(p.canvas.height !== bh) p.canvas.height = bh;
+  redrawInk(p);
+}
+function redrawInk(p){
+  var W = p.canvas.width, H = p.canvas.height;
+  if(!W || !H) return;
+  var ctx = p.canvas.getContext("2d");
+  ctx.clearRect(0, 0, W, H);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "#111111";
+  (solveInk[p.idx] || []).forEach(function(st){
+    if(!st.pts || !st.pts.length) return;
+    ctx.lineWidth = Math.max(1, st.w * W);
+    ctx.beginPath();
+    st.pts.forEach(function(pt, i){
+      var x = pt[0] * W, y = pt[1] * H;
+      if(i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    if(st.pts.length === 1) ctx.lineTo(st.pts[0][0] * W + 0.01, st.pts[0][1] * H);
+    ctx.stroke();
+  });
+}
+function inkPos(p, ev){
+  var r = p.canvas.getBoundingClientRect();
+  if(!r.width || !r.height) return [0, 0];
+  return [
+    Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
+    Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height))
+  ];
+}
+function eraseAt(p, pt){
+  var strokes = solveInk[p.idx];
+  if(!strokes || !strokes.length) return;
+  var r = p.canvas.getBoundingClientRect();
+  var tx = 14 / (r.width || 1), ty = 14 / (r.height || 1); /* 約14px を正規化 */
+  var kept = strokes.filter(function(st){
+    return !st.pts.some(function(q){
+      var dx = (q[0] - pt[0]) / tx, dy = (q[1] - pt[1]) / ty;
+      return dx * dx + dy * dy < 1;
+    });
+  });
+  if(kept.length !== strokes.length){
+    if(kept.length) solveInk[p.idx] = kept; else delete solveInk[p.idx];
+    redrawInk(p);
+  }
+}
+function attachInkHandlers(p){
+  p.canvas.addEventListener("pointerdown", function(ev){
+    if(!inkTool) return;
+    ev.preventDefault();
+    try{ p.canvas.setPointerCapture(ev.pointerId); }catch(e){}
+    var pt = inkPos(p, ev);
+    if(inkTool === "pen"){
+      /* 線幅は「100%表示で約2.5px」をページ幅比で保持 */
+      var st = { w: 2.5 / (p.img.clientWidth || 1), pts: [pt] };
+      (solveInk[p.idx] = solveInk[p.idx] || []).push(st);
+      inkDrawing = { page: p, stroke: st };
+      redrawInk(p);
+    } else {
+      inkDrawing = { page: p, erase: true };
+      eraseAt(p, pt);
+    }
+  });
+  p.canvas.addEventListener("pointermove", function(ev){
+    if(!inkDrawing || inkDrawing.page !== p) return;
+    var pt = inkPos(p, ev);
+    if(inkDrawing.stroke){
+      inkDrawing.stroke.pts.push(pt);
+      redrawInk(p);
+    } else if(inkDrawing.erase){
+      eraseAt(p, pt);
+    }
+  });
+  function endStroke(){
+    if(inkDrawing && inkDrawing.page === p){
+      inkDrawing = null;
+      saveInk();
+    }
+  }
+  p.canvas.addEventListener("pointerup", endStroke);
+  p.canvas.addEventListener("pointercancel", endStroke);
+}
+function setInkTool(tool){
+  inkTool = (inkTool === tool) ? null : tool;
+  inkDrawing = null;
+  $("btnPen").classList.toggle("tool-on", inkTool === "pen");
+  $("btnEraser").classList.toggle("tool-on", inkTool === "eraser");
+  $("pagesInner").classList.toggle("ink-on", !!inkTool);
+  $("btnInkClear").hidden = !inkTool;
+}
+$("btnPen").addEventListener("click", function(){ setInkTool("pen"); });
+$("btnEraser").addEventListener("click", function(){ setInkTool("eraser"); });
+$("btnInkClear").addEventListener("click", function(){
+  solveInk = {};
+  solvePages.forEach(redrawInk);
+  saveInk();
+});
+window.addEventListener("resize", function(){
+  solvePages.forEach(syncInkCanvas);
 });
 
 /* ================================================================
@@ -817,6 +1015,8 @@ function gradeSheet(){
     }
   }
   sheetGraded = true;
+  solveFinished = true;   /* 採点したらタイマーは止める（再開は手動ボタン） */
+  setCounting(false);
   var banner = $("scoreBanner");
   banner.innerHTML = '得点 <span class="big">' + total + '</span> <small>/ ' + max + " 点</small>";
   banner.className = "show";
