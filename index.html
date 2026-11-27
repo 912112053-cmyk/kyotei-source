@@ -132,11 +132,13 @@
     font-size:12px;color:#a3a099;line-height:1}
   .bubble.filled .ov{background:#2e2c29;border-color:#2e2c29;color:#2e2c29}
   .bubble.correct-hint .ov{border-color:#c02727;box-shadow:0 0 0 1.6px #c02727;color:#c02727;font-weight:700}
-  .sheet-foot{margin-top:16px;border-top:2.2px solid #161513;padding-top:12px}
-  .sheet-foot .unmarked{font-size:13.5px;margin-bottom:10px}
-  .sheet-foot .srow{display:flex;gap:8px;flex-wrap:wrap}
-  .sheet-foot .btn{border-color:#8a867c;color:#161513;background:#fff}
-  .sheet-foot .btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
+  .sheet-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;
+    justify-content:space-between;gap:10px;background:#fff;
+    border-bottom:1.6px solid #161513;padding:8px 0;margin-bottom:8px}
+  .sheet-bar .unmarked{font-size:13.5px}
+  .sheet-bar .srow{display:flex;gap:8px;flex:none}
+  .sheet-bar .btn{border-color:#8a867c;color:#161513;background:#fff}
+  .sheet-bar .btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
 </style>
 </head>
 <body>
@@ -155,7 +157,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v15（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v16（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -207,16 +209,16 @@
         <span class="shtitle" id="sheetTitle"></span>
         <span class="shlabel">解答用紙</span>
       </div>
+      <div class="sheet-bar">
+        <span class="unmarked" id="unmarkedLine"></span>
+        <span class="srow">
+          <button class="btn small" id="sheetClose">閉じる</button>
+          <button class="btn small solid" id="sheetGrade">採点する</button>
+          <button class="btn small" id="sheetExport" hidden>解答を出力</button>
+        </span>
+      </div>
       <div id="scoreBanner"></div>
       <div class="msblocks" id="msBlocks"></div>
-      <div class="sheet-foot">
-        <div class="unmarked" id="unmarkedLine"></div>
-        <div class="srow">
-          <button class="btn" id="sheetClose">閉じる</button>
-          <button class="btn solid" id="sheetGrade">採点する</button>
-          <button class="btn" id="sheetExport" hidden>解答を出力</button>
-        </div>
-      </div>
     </div>
   </div>
 </section>
