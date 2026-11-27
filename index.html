@@ -132,13 +132,20 @@
     font-size:12px;color:#a3a099;line-height:1}
   .bubble.filled .ov{background:#2e2c29;border-color:#2e2c29;color:#2e2c29}
   .bubble.correct-hint .ov{border-color:#c02727;box-shadow:0 0 0 1.6px #c02727;color:#c02727;font-weight:700}
-  .sheet-bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;
-    justify-content:space-between;gap:10px;background:#fff;
-    border-bottom:1.6px solid #161513;padding:8px 0;margin-bottom:8px}
+  .sheet-sticky{position:sticky;top:0;z-index:5;background:#fff;margin-bottom:8px}
+  .sheet-bar{display:flex;align-items:center;
+    justify-content:space-between;gap:10px;
+    border-bottom:1.6px solid #161513;padding:8px 0}
   .sheet-bar .unmarked{font-size:13.5px}
   .sheet-bar .srow{display:flex;gap:8px;flex:none}
   .sheet-bar .btn{border-color:#8a867c;color:#161513;background:#fff}
   .sheet-bar .btn.solid{background:var(--accent);border-color:var(--accent);color:#fff}
+  .secnav{display:flex;gap:6px;flex-wrap:wrap;padding-top:8px}
+  .secnav[hidden]{display:none}
+  .secnav button{font:inherit;font-size:13.5px;padding:6px 11px;border:1.6px solid #161513;
+    background:#fff;color:#161513;border-radius:999px;cursor:pointer}
+  .secnav button.on{background:#161513;color:#fff}
+  .secnav .secprog{font-size:11.5px;opacity:.7;margin-left:4px}
 </style>
 </head>
 <body>
@@ -157,7 +164,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v17（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v18（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -209,13 +216,16 @@
         <span class="shtitle" id="sheetTitle"></span>
         <span class="shlabel">解答用紙</span>
       </div>
-      <div class="sheet-bar">
-        <span class="unmarked" id="unmarkedLine"></span>
-        <span class="srow">
-          <button class="btn small" id="sheetClose">閉じる</button>
-          <button class="btn small solid" id="sheetGrade">採点する</button>
-          <button class="btn small" id="sheetExport" hidden>解答を出力</button>
-        </span>
+      <div class="sheet-sticky">
+        <div class="sheet-bar">
+          <span class="unmarked" id="unmarkedLine"></span>
+          <span class="srow">
+            <button class="btn small" id="sheetClose">閉じる</button>
+            <button class="btn small solid" id="sheetGrade">採点する</button>
+            <button class="btn small" id="sheetExport" hidden>解答を出力</button>
+          </span>
+        </div>
+        <div class="secnav" id="secNav" hidden></div>
       </div>
       <div id="scoreBanner"></div>
       <div class="msblocks" id="msBlocks"></div>
@@ -448,11 +458,12 @@ async function parseAnswerBuf(buf){
    変換： 解答キー抽出 + 全ページ画像化（数秒で終わる）
    ================================================================ */
 async function convertExam(opts){
-  var answerKey = {}, points = {};
+  var answerKey = {}, points = {}, parsedSections = null;
   if(opts.aBuf){
     setProgress("解答PDFを解析中…", "");
     var parsed = await parseAnswerBuf(opts.aBuf);
     answerKey = parsed.key; points = parsed.points;
+    parsedSections = parsed.sections || null;
   }
   var r = await renderAllPages(opts.qBuf, function(p, total){
     setProgress("ページを描画中…", "ページ " + p + " / " + total);
@@ -460,7 +471,7 @@ async function convertExam(opts){
   var keyCount = Object.keys(answerKey).length;
   return {
     pageImages: r.blobs, pageCount: r.pageCount, renderEngine: r.renderEngine,
-    answerKey: answerKey, points: points,
+    answerKey: answerKey, points: points, sections: parsedSections,
     questionCount: keyCount > 0 ? keyCount : DEFAULT_ROWS
   };
 }
@@ -538,9 +549,24 @@ async function renderLibrary(){
   });
 }
 
+/* 旧レコード（大問情報なし）: 保存済みの解答PDFから大問の範囲だけを取り直す */
+async function ensureSections(exam){
+  if(exam.sections !== undefined || !exam.answerPDF) return;
+  try{
+    var parsed = await parseAnswerBuf(exam.answerPDF);
+    exam.sections = parsed.sections || null;
+    await idbPut(exam);
+  }catch(e){
+    exam.sections = null;
+  }
+}
+
 async function onExamAction(action, exam, btnEl){
   if(action === "solve"){
-    if(await ensurePageImages(exam)) openSolve(exam);
+    if(await ensurePageImages(exam)){
+      await ensureSections(exam);
+      openSolve(exam);
+    }
   } else if(action === "del"){
     var delBtn = btnEl || null;
     if(!delBtn || delBtn.dataset.armed !== "1"){
@@ -566,6 +592,7 @@ async function onExamAction(action, exam, btnEl){
       exam.renderEngine = r.renderEngine;
       exam.answerKey = r.answerKey;
       exam.points = r.points;
+      exam.sections = r.sections;
       exam.questionCount = r.questionCount;
       delete exam.generatedHTML;
       delete exam.lineCount;
@@ -902,6 +929,18 @@ function markedCount(){
   return c;
 }
 
+var sheetSecIdx = 0;
+function showSection(i){
+  sheetSecIdx = i;
+  document.querySelectorAll("#msBlocks .msblock[data-sec]").forEach(function(b){
+    b.style.display = parseInt(b.getAttribute("data-sec"), 10) === i ? "" : "none";
+  });
+  document.querySelectorAll("#secNav button").forEach(function(b, bi){
+    b.classList.toggle("on", bi === i);
+  });
+  $("sheetOverlay").scrollTop = 0;
+}
+
 function buildSheet(){
   var exam = solveExam;
   $("sheetTitle").textContent = exam.title;
@@ -911,10 +950,12 @@ function buildSheet(){
   $("sheetExport").hidden = true;
   var wrap = $("msBlocks");
   wrap.innerHTML = "";
-  var start = 1;
-  blockSizes(exam.questionCount).forEach(function(size){
+  var nav = $("secNav");
+  nav.innerHTML = "";
+  function makeBlock(from, to, secIdx){
     var block = document.createElement("div");
     block.className = "msblock";
+    if(secIdx != null) block.setAttribute("data-sec", secIdx);
     var head = document.createElement("div");
     head.className = "msgrid head";
     var h = '<div class="hc num">番号</div>';
@@ -922,8 +963,7 @@ function buildSheet(){
     h += "<div></div>";
     head.innerHTML = h;
     block.appendChild(head);
-    for(var i = 0; i < size; i++){
-      var n = start + i;
+    for(var n = from; n <= to; n++){
       var row = document.createElement("div");
       row.className = "msgrid msrow";
       row.setAttribute("data-row", n);
@@ -936,9 +976,27 @@ function buildSheet(){
       row.innerHTML = rh;
       block.appendChild(row);
     }
-    start += size;
-    wrap.appendChild(block);
-  });
+    return block;
+  }
+  var secs = (exam.sections && exam.sections.length >= 2) ? exam.sections : null;
+  if(secs){
+    nav.hidden = false;
+    secs.forEach(function(s, i){
+      var b = document.createElement("button");
+      b.innerHTML = s.label + '<span class="secprog" data-secprog="' + i + '"></span>';
+      b.addEventListener("click", function(){ showSection(i); });
+      nav.appendChild(b);
+      wrap.appendChild(makeBlock(s.from, s.to, i));
+    });
+    showSection(0);
+  } else {
+    nav.hidden = true;
+    var start = 1;
+    blockSizes(exam.questionCount).forEach(function(size){
+      wrap.appendChild(makeBlock(start, start + size - 1, null));
+      start += size;
+    });
+  }
   wrap.querySelectorAll(".bubble").forEach(function(b){
     b.addEventListener("click", function(){
       var n = parseInt(b.getAttribute("data-n"), 10);
@@ -965,6 +1023,16 @@ function updateUnmarked(){
   $("unmarkedLine").textContent = un > 0
     ? "未マーク " + un + "問（全" + solveExam.questionCount + "問）"
     : "全" + solveExam.questionCount + "問 マーク済み";
+  var secs = solveExam.sections;
+  if(secs && secs.length >= 2){
+    secs.forEach(function(s, i){
+      var el = document.querySelector('[data-secprog="' + i + '"]');
+      if(!el) return;
+      var c = 0;
+      for(var n = s.from; n <= s.to; n++) if(solveMarks[n]) c++;
+      el.textContent = c + "/" + (s.to - s.from + 1);
+    });
+  }
 }
 function clearGrading(){
   sheetGraded = false;
@@ -1183,7 +1251,7 @@ $("impStart").addEventListener("click", async function(){
       id: newId(), title: title, createdAt: Date.now(),
       questionCount: r.questionCount,
       pageImages: r.pageImages, pageCount: r.pageCount, renderEngine: r.renderEngine,
-      answerKey: r.answerKey, points: r.points,
+      answerKey: r.answerKey, points: r.points, sections: r.sections,
       questionPDF: qBuf, answerPDF: aBuf
     };
     setProgress("保存中…", "");
