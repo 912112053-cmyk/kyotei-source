@@ -111,6 +111,7 @@
     text-align:center;font-size:15px}
   #scoreBanner.show{display:block}
   #scoreBanner .big{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}
+  #scoreBanner .secscores{font-size:13px;margin-top:4px}
   #scoreBanner small{font-size:13px;color:#55524b}
   .msblocks{display:flex;flex-wrap:wrap;gap:18px 22px;margin-top:8px}
   .msblock{flex:1 1 300px;min-width:280px}
@@ -164,7 +165,7 @@
     </div>
     <div id="examList"></div>
     <p id="emptyMsg" class="muted">まだ模試がありません。「模試を取り込む」から問題PDFを追加してください。</p>
-    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v20（マークシート）</p>
+    <p class="muted" style="font-size:11px;margin-top:24px">アプリ v21（マークシート）</p>
   </section>
 
   <!-- 取り込み -->
@@ -1047,6 +1048,7 @@ function clearGrading(){
   $("scoreBanner").className = "";
   $("scoreBanner").innerHTML = "";
   $("sheetExport").hidden = true;
+  updateUnmarked();
   document.querySelectorAll("[data-res]").forEach(function(el){ el.textContent = ""; el.className = "res"; });
   document.querySelectorAll(".bubble.correct-hint").forEach(function(b){ b.classList.remove("correct-hint"); });
 }
@@ -1100,7 +1102,24 @@ function gradeSheet(){
   solveFinished = true;   /* 採点したらタイマーは止める（再開は手動ボタン） */
   setCounting(false);
   var banner = $("scoreBanner");
-  banner.innerHTML = '得点 <span class="big">' + total + '</span> <small>/ ' + max + " 点</small>";
+  var secs = solveExam.sections;
+  if(secs && secs.length >= 2){
+    var parts = secs.map(function(s, i){
+      var g = 0, mx = 0;
+      for(var n = s.from; n <= s.to; n++){
+        if(key[n] == null) continue;
+        mx += pointsOf(n);
+        if(solveMarks[n] === key[n]) g += pointsOf(n);
+      }
+      var el = document.querySelector('[data-secprog="' + i + '"]');
+      if(el) el.textContent = g + "/" + mx + "点";
+      return s.label + " " + g + "/" + mx + "点";
+    });
+    banner.innerHTML = '得点 <span class="big">' + total + '</span> <small>/ ' + max + " 点</small>"
+      + '<div class="secscores">' + parts.join("　") + "</div>";
+  } else {
+    banner.innerHTML = '得点 <span class="big">' + total + '</span> <small>/ ' + max + " 点</small>";
+  }
   banner.className = "show";
   $("sheetExport").hidden = false;
   saveSolveState();
